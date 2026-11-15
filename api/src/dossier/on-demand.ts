@@ -1,0 +1,115 @@
+// #130 O dossiê pedido na gaveta: o mesmo agente da #38, disparado pela pessoa para uma proposta só.
+// #130 Roda depois do 202, pelo waitUntil do Worker. Nunca lança: qualquer falha vira linha de erro (ou mantém o
+// dossiê pronto anterior, AC-4) e o pedido sempre fecha em dossier_requests.
+import { DEFAULT_MODEL, ClaudeError, type Ask } from '../claude/client.js';
+import type { Db } from '../claude/db.js';
+import { storedError } from '../claude/runner.js';
+import { dossierRequest, failureReason, parseDossierOutput, type DossierInput } from '../claude/tasks/dossier.js';
+import type { CheckContext, InvoiceView } from '../domain/index.js';
+import type { DossierRequests } from './requests.js';
+import { DOSSIER_TASK } from './source.js';
+
+const TABLE = 'claude_suggestions';
+
+/** #130 O que a geração sob demanda precisa; tudo injetável nos testes. */
+export type OnDemandDeps = {
+  /** #130 O banco das sugestões, o mesmo Db do laço (#66). */
+  readonly db: Db;
+  readonly requests: DossierRequests;
+  /** #130 O contexto da nota, como a gaveta e a tarefa montam (#68). */
+  readonly context: (invoiceAccessKey: string) => Promise<CheckContext>;
+  /** #130 Sem credencial do Claude, undefined: a geração fecha em erro `claude_failed`. */
+  readonly ask?: Ask;
+  /** #130 Valores que nunca entram na coluna error (o token, a chave do Supabase). */
+  readonly secrets?: readonly string[];
+  readonly now?: () => Date;
+  readonly log?: (line: string) => void;
+};
+
+export type OnDemandRequest = {
+  readonly invoiceAccessKey: string;
+  readonly invoice: InvoiceView;
+  readonly requestedBy: string;
+  readonly requestedAt: string;
+};
+
+type Previous = { readonly status: string; readonly attempts: number };
+
+async function previousRow(db: Db, key: string): Promise<Previous | undefined> {
+  const rows = await db.select(TABLE, {
+    select: 'status,attempts',
+    filters: { task: `eq.${DOSSIER_TASK}`, input_key: `eq.${key}` },
+    order: 'input_key.asc',
+  });
+  const [first] = rows as { status?: unknown; attempts?: unknown }[];
+  if (!first || typeof first.status !== 'string') return undefined;
+  return { status: first.status, attempts: typeof first.attempts === 'number' ? first.attempts : 0 };
+}
+
+/**
+ * #130 Gera o dossiê de uma nota e grava em claude_suggestions com `trigger = on_demand`. AC-4: se falhar e já
+ * houver um dossiê `ok`, o anterior fica como está. Sempre fecha o pedido em dossier_requests.
+ */
+export async function generateOnDemand(deps: OnDemandDeps, request: OnDemandRequest): Promise<void> {
+  const clock = deps.now ?? (() => new Date());
+  const log = deps.log ?? ((line: string) => console.error(line));
+  const key = request.invoiceAccessKey;
+  try {
+    const started = clock().getTime();
+    let input: DossierInput | Record<string, never> = {};
+    let result: { ok: true; output: unknown } | { ok: false; error: unknown };
+    try {
+      if (!deps.ask) throw new ClaudeError('auth', 'sem credencial do Claude no Worker');
+      input = dossierRequest(request.invoice, await deps.context(key));
+      const output = parseDossierOutput(await deps.ask<unknown>(input));
+      if (!output) throw new ClaudeError('format', 'dossier: resposta do Claude fora do formato');
+      result = { ok: true, output };
+    } catch (error) {
+      result = { ok: false, error };
+    }
+    const latencyMs = clock().getTime() - started;
+    const previous = await previousRow(deps.db, key);
+    if (!result.ok && previous?.status === 'ok') {
+      // #130 AC-4: o dossiê pronto continua; a falha fica só no log.
+      log(`#130 dossiê sob demanda da nota ${key} falhou (${failureReason(result.error)}); o anterior continua`);
+    } else {
+      const attempts = previous?.attempts ?? 0;
+      const fields = result.ok
+        ? { output: result.output, status: 'ok', error: null, reason: null, attempts: 0 }
+        : {
+            output: null,
+            status: 'error',
+            error: storedError(result.error, deps.secrets),
+            reason: failureReason(result.error),
+            attempts: attempts + 1,
+          };
+      await deps.db.upsert(
+        TABLE,
+        [
+          {
+            task: DOSSIER_TASK,
+            input_key: key,
+            input,
+            model: DEFAULT_MODEL,
+            updated_at: clock().toISOString(),
+            trigger: 'on_demand',
+            requested_by: request.requestedBy,
+            requested_at: request.requestedAt,
+            latency_ms: latencyMs,
+            ...fields,
+          },
+        ],
+        { onConflict: 'task,input_key', resolution: 'merge' },
+      );
+    }
+  } catch (error) {
+    log(`#130 dossiê sob demanda da nota ${key} não gravado: ${storedError(error, deps.secrets)}`);
+  } finally {
+    try {
+      await deps.requests.finish(key, clock());
+    } catch (error) {
+      // #130 O pedido aberto vira abandonado em IN_FLIGHT_MS; a gaveta para de mostrar Gerando sozinha.
+      log(`#130 pedido do dossiê da nota ${key} não fechado: ${storedError(error, deps.secrets)}`);
+    }
+  }
+}

@@ -132,6 +132,11 @@ export class FakePostgrest {
         if (row[col] === null || row[col] === undefined) return false;
         continue;
       }
+      // #130 is.null: o pedido do dossiê ainda aberto.
+      if (expr === 'is.null') {
+        if (row[col] !== null && row[col] !== undefined) return false;
+        continue;
+      }
       if (expr.startsWith('gte.')) {
         if (Date.parse(String(row[col])) < Date.parse(expr.slice(4))) return false;
         continue;

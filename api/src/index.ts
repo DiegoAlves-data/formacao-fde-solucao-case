@@ -8,6 +8,9 @@ import { SupabaseRest } from "./connectors/supabase-rest";
 import { supabaseConnectors } from "./connectors/supabase-connectors";
 import { loadDossierContext } from "./dossier/context";
 import { SupabaseDossierSource } from "./dossier/source";
+import { SupabaseDossierRequests } from "./dossier/requests";
+import { ClaudeClient, credentialsFromEnv } from "./claude/client";
+import { restDb } from "./claude/db";
 import { SupabaseTimelineSource } from "./automation/readers";
 import { appStoreActionOutbox } from "./connectors/store-action";
 import { wmsDockActionOutbox } from "./connectors/wms-dock-action";
@@ -20,8 +23,8 @@ export interface Worker {
 /** Monta o Worker com as dependências dadas. Os testes injetam um verificador sem rede (#54). */
 export function createWorker(deps: RouterDeps): Worker {
   return {
-    async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
-      return route(request, env, deps);
+    async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+      return route(request, env, deps, ctx);
     },
     async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
       await tick(controller, env);
@@ -50,7 +53,21 @@ function approvalDeps(env: Env) {
     dossier: {
       source: new SupabaseDossierSource(rest),
       context: (key: string) => loadDossierContext(captureDeps, key),
+      // #130 O pedido da gaveta: os pedidos em dossier_requests e o Claude com a credencial do Worker (AC-7).
+      requests: new SupabaseDossierRequests(rest),
+      onDemand: onDemandClaude(env, rest),
     },
+  };
+}
+
+/** #130 O banco e o Claude da geração sob demanda; sem credencial, sem `ask`, e a geração fecha em erro. */
+function onDemandClaude(env: Env, rest: SupabaseRest) {
+  const credentials = credentialsFromEnv(env);
+  const secret = credentials ? (credentials.kind === "api-key" ? credentials.apiKey : credentials.token) : "";
+  return {
+    db: restDb(rest),
+    ...(credentials ? { ask: new ClaudeClient({ credentials }).ask } : {}),
+    secrets: [secret, env.BARTE_ACADEMY_SUPABASE_SECRET_KEY ?? ""],
   };
 }
 

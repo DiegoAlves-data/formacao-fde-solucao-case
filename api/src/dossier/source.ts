@@ -38,7 +38,7 @@ const isRow = shaped<SuggestionRow>({
 } satisfies Shape<SuggestionRow>);
 
 // #68: só letras, dígitos e hífen chegam ao filtro do PostgREST: a chave de acesso é numérica.
-const ACCESS_KEY = /^[A-Za-z0-9-]+$/;
+export const ACCESS_KEY = /^[A-Za-z0-9-]+$/;
 
 /** #68: lê claude_suggestions pelo PostgREST, com os guards do #80. */
 export class SupabaseDossierSource implements DossierSource {

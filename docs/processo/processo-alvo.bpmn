@@ -1,0 +1,399 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:color="http://www.omg.org/spec/BPMN/non-normative/color/1.0" id="Defs_AccountsPayable_Target" targetNamespace="https://barte.ai/formacao-fde/ja-chegou">
+  <bpmn:collaboration id="Collab_AccountsPayable_Target">
+    <bpmn:participant id="Part_AccountsPayable_Target" name="Já Chegou · contas a pagar com o agente" processRef="AccountsPayable_Target" />
+  </bpmn:collaboration>
+  <bpmn:process id="AccountsPayable_Target" name="Contas a pagar da Já Chegou: processo-alvo" isExecutable="false">
+    <bpmn:laneSet id="LaneSet_AccountsPayable_Target">
+      <bpmn:lane id="Lane_Capture" name="Captura de notas">
+        <bpmn:flowNodeRef>Start_InvoiceIssued</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Capture</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Agent" name="Agente">
+        <bpmn:flowNodeRef>Task_Classify</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_Duplicate</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_BlockDuplicate</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_DuplicateBlocked</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_AlreadyPaid</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_LinkPayment</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_Regularized</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_ProposeAction</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Approver</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_WhoDecides</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Reconcile</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Dock" name="Doca (CD)">
+        <bpmn:flowNodeRef>Gateway_Join</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Plan</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Event_Arrives</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Count</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_DockDecision</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Approver" name="Aprovador da alçada">
+        <bpmn:flowNodeRef>Task_Confirm</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Payables" name="Contas a pagar">
+        <bpmn:flowNodeRef>Task_ReturnNote</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Block</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Release</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_Refused</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_OnList</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Start_InvoiceIssued" name="Nota emitida na SEFAZ">
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+      <bpmn:messageEventDefinition />
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Task_Capture" name="Capturar a nota">
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_Classify" name="Classificar a divergência">
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="Gateway_Duplicate" name="Duplicada?">
+      <bpmn:incoming>Flow_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_4</bpmn:outgoing>
+      <bpmn:outgoing>Flow_5</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Task_BlockDuplicate" name="Bloquear o título duplicado">
+      <bpmn:incoming>Flow_4</bpmn:incoming>
+      <bpmn:outgoing>Flow_6</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="End_DuplicateBlocked" name="Título bloqueado">
+      <bpmn:incoming>Flow_6</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:exclusiveGateway id="Gateway_AlreadyPaid" name="Já paga fora do fluxo?">
+      <bpmn:incoming>Flow_5</bpmn:incoming>
+      <bpmn:outgoing>Flow_7</bpmn:outgoing>
+      <bpmn:outgoing>Flow_8</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Task_LinkPayment" name="Vincular ao pagamento já feito">
+      <bpmn:incoming>Flow_7</bpmn:incoming>
+      <bpmn:outgoing>Flow_9</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="End_Regularized" name="Regularizada, sem novo pagamento">
+      <bpmn:incoming>Flow_9</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="Task_ProposeAction" name="Propor a ação na doca">
+      <bpmn:incoming>Flow_8</bpmn:incoming>
+      <bpmn:outgoing>Flow_10</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:businessRuleTask id="Task_Approver" name="Definir o aprovador pela régua">
+      <bpmn:incoming>Flow_10</bpmn:incoming>
+      <bpmn:outgoing>Flow_11</bpmn:outgoing>
+    </bpmn:businessRuleTask>
+    <bpmn:exclusiveGateway id="Gateway_WhoDecides" name="Quem decide?">
+      <bpmn:incoming>Flow_11</bpmn:incoming>
+      <bpmn:outgoing>Flow_12</bpmn:outgoing>
+      <bpmn:outgoing>Flow_13</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:userTask id="Task_Confirm" name="Confirmar ou alterar a ação">
+      <bpmn:incoming>Flow_12</bpmn:incoming>
+      <bpmn:outgoing>Flow_14</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:exclusiveGateway id="Gateway_Join" name="">
+      <bpmn:incoming>Flow_13</bpmn:incoming>
+      <bpmn:incoming>Flow_14</bpmn:incoming>
+      <bpmn:outgoing>Flow_15</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:userTask id="Task_Plan" name="Planejar o recebimento">
+      <bpmn:incoming>Flow_15</bpmn:incoming>
+      <bpmn:outgoing>Flow_16</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:intermediateCatchEvent id="Event_Arrives" name="Mercadoria chega">
+      <bpmn:incoming>Flow_16</bpmn:incoming>
+      <bpmn:outgoing>Flow_17</bpmn:outgoing>
+      <bpmn:messageEventDefinition />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:userTask id="Task_Count" name="Contar a mercadoria">
+      <bpmn:incoming>Flow_17</bpmn:incoming>
+      <bpmn:outgoing>Flow_18</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:serviceTask id="Task_Reconcile" name="Conciliar contagem, nota e pedido">
+      <bpmn:incoming>Flow_18</bpmn:incoming>
+      <bpmn:outgoing>Flow_19</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="Gateway_DockDecision" name="Decisão na doca">
+      <bpmn:incoming>Flow_19</bpmn:incoming>
+      <bpmn:outgoing>Flow_20</bpmn:outgoing>
+      <bpmn:outgoing>Flow_21</bpmn:outgoing>
+      <bpmn:outgoing>Flow_22</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:task id="Task_ReturnNote" name="Emitir nota de devolução da diferença">
+      <bpmn:incoming>Flow_21</bpmn:incoming>
+      <bpmn:outgoing>Flow_23</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:task id="Task_Block" name="Bloquear o título">
+      <bpmn:incoming>Flow_22</bpmn:incoming>
+      <bpmn:outgoing>Flow_25</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:task id="Task_Release" name="Liberar o título para a lista do dia">
+      <bpmn:incoming>Flow_20</bpmn:incoming>
+      <bpmn:incoming>Flow_23</bpmn:incoming>
+      <bpmn:outgoing>Flow_24</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:endEvent id="End_Refused" name="Recusado, título bloqueado">
+      <bpmn:incoming>Flow_25</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="End_OnList" name="Na lista do dia, conferido">
+      <bpmn:incoming>Flow_24</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="Start_InvoiceIssued" targetRef="Task_Capture" />
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_Capture" targetRef="Task_Classify" />
+    <bpmn:sequenceFlow id="Flow_3" sourceRef="Task_Classify" targetRef="Gateway_Duplicate" />
+    <bpmn:sequenceFlow id="Flow_4" name="sim" sourceRef="Gateway_Duplicate" targetRef="Task_BlockDuplicate" />
+    <bpmn:sequenceFlow id="Flow_5" name="não" sourceRef="Gateway_Duplicate" targetRef="Gateway_AlreadyPaid" />
+    <bpmn:sequenceFlow id="Flow_6" sourceRef="Task_BlockDuplicate" targetRef="End_DuplicateBlocked" />
+    <bpmn:sequenceFlow id="Flow_7" name="sim" sourceRef="Gateway_AlreadyPaid" targetRef="Task_LinkPayment" />
+    <bpmn:sequenceFlow id="Flow_8" name="não" sourceRef="Gateway_AlreadyPaid" targetRef="Task_ProposeAction" />
+    <bpmn:sequenceFlow id="Flow_9" sourceRef="Task_LinkPayment" targetRef="End_Regularized" />
+    <bpmn:sequenceFlow id="Flow_10" sourceRef="Task_ProposeAction" targetRef="Task_Approver" />
+    <bpmn:sequenceFlow id="Flow_11" sourceRef="Task_Approver" targetRef="Gateway_WhoDecides" />
+    <bpmn:sequenceFlow id="Flow_12" name="pessoa" sourceRef="Gateway_WhoDecides" targetRef="Task_Confirm" />
+    <bpmn:sequenceFlow id="Flow_13" name="regra" sourceRef="Gateway_WhoDecides" targetRef="Gateway_Join" />
+    <bpmn:sequenceFlow id="Flow_14" sourceRef="Task_Confirm" targetRef="Gateway_Join" />
+    <bpmn:sequenceFlow id="Flow_15" sourceRef="Gateway_Join" targetRef="Task_Plan" />
+    <bpmn:sequenceFlow id="Flow_16" sourceRef="Task_Plan" targetRef="Event_Arrives" />
+    <bpmn:sequenceFlow id="Flow_17" sourceRef="Event_Arrives" targetRef="Task_Count" />
+    <bpmn:sequenceFlow id="Flow_18" sourceRef="Task_Count" targetRef="Task_Reconcile" />
+    <bpmn:sequenceFlow id="Flow_19" sourceRef="Task_Reconcile" targetRef="Gateway_DockDecision" />
+    <bpmn:sequenceFlow id="Flow_20" name="receber" sourceRef="Gateway_DockDecision" targetRef="Task_Release" />
+    <bpmn:sequenceFlow id="Flow_21" name="receber parcial" sourceRef="Gateway_DockDecision" targetRef="Task_ReturnNote" />
+    <bpmn:sequenceFlow id="Flow_22" name="recusar" sourceRef="Gateway_DockDecision" targetRef="Task_Block" />
+    <bpmn:sequenceFlow id="Flow_23" sourceRef="Task_ReturnNote" targetRef="Task_Release" />
+    <bpmn:sequenceFlow id="Flow_24" sourceRef="Task_Release" targetRef="End_OnList" />
+    <bpmn:sequenceFlow id="Flow_25" sourceRef="Task_Block" targetRef="End_Refused" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_AccountsPayable_Target">
+    <bpmndi:BPMNPlane id="Plane_AccountsPayable_Target" bpmnElement="Collab_AccountsPayable_Target">
+      <bpmndi:BPMNShape id="Part_AccountsPayable_Target_di" bpmnElement="Part_AccountsPayable_Target" isHorizontal="true" color:background-color="#FFFFFF" color:border-color="#444441">
+        <dc:Bounds x="60" y="60" width="3290" height="1200" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_Capture_di" bpmnElement="Lane_Capture" isHorizontal="true" color:background-color="#F4F8FD" color:border-color="#5F5E5A">
+        <dc:Bounds x="90" y="60" width="3260" height="150" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_Agent_di" bpmnElement="Lane_Agent" isHorizontal="true" color:background-color="#F6F5FE" color:border-color="#5F5E5A">
+        <dc:Bounds x="90" y="210" width="3260" height="300" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_Dock_di" bpmnElement="Lane_Dock" isHorizontal="true" color:background-color="#FFF9F0" color:border-color="#5F5E5A">
+        <dc:Bounds x="90" y="510" width="3260" height="150" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_Approver_di" bpmnElement="Lane_Approver" isHorizontal="true" color:background-color="#FFF9F0" color:border-color="#5F5E5A">
+        <dc:Bounds x="90" y="660" width="3260" height="150" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_Payables_di" bpmnElement="Lane_Payables" isHorizontal="true" color:background-color="#F8F7F3" color:border-color="#5F5E5A">
+        <dc:Bounds x="90" y="810" width="3260" height="450" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Start_InvoiceIssued_di" bpmnElement="Start_InvoiceIssued" color:background-color="#E6F1FB" color:border-color="#185FA5">
+        <dc:Bounds x="185" y="125" width="40" height="40" />
+        <bpmndi:BPMNLabel><dc:Bounds x="145" y="171" width="120" height="28" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Capture_di" bpmnElement="Task_Capture" color:background-color="#E6F1FB" color:border-color="#185FA5">
+        <dc:Bounds x="310" y="107" width="130" height="76" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Classify_di" bpmnElement="Task_Classify" color:background-color="#EEEDFE" color:border-color="#534AB7">
+        <dc:Bounds x="480" y="257" width="130" height="76" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_Duplicate_di" bpmnElement="Gateway_Duplicate" color:background-color="#FFFFFF" color:border-color="#444441">
+        <dc:Bounds x="689" y="269" width="52" height="52" />
+        <bpmndi:BPMNLabel><dc:Bounds x="721" y="239" width="120" height="28" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_BlockDuplicate_di" bpmnElement="Task_BlockDuplicate" color:background-color="#FCEBEB" color:border-color="#A32D2D">
+        <dc:Bounds x="650" y="407" width="130" height="76" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_DuplicateBlocked_di" bpmnElement="End_DuplicateBlocked" color:background-color="#FCEBEB" color:border-color="#A32D2D">
+        <dc:Bounds x="865" y="425" width="40" height="40" />
+        <bpmndi:BPMNLabel><dc:Bounds x="825" y="471" width="120" height="28" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_AlreadyPaid_di" bpmnElement="Gateway_AlreadyPaid" color:background-color="#FFFFFF" color:border-color="#444441">
+        <dc:Bounds x="1029" y="269" width="52" height="52" />
+        <bpmndi:BPMNLabel><dc:Bounds x="1061" y="239" width="120" height="28" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_LinkPayment_di" bpmnElement="Task_LinkPayment" color:background-color="#EEEDFE" color:border-color="#534AB7">
+        <dc:Bounds x="990" y="407" width="130" height="76" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Regularized_di" bpmnElement="End_Regularized" color:background-color="#EAF3DE" color:border-color="#3B6D11">
+        <dc:Bounds x="1205" y="425" width="40" height="40" />
+        <bpmndi:BPMNLabel><dc:Bounds x="1165" y="471" width="120" height="28" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_ProposeAction_di" bpmnElement="Task_ProposeAction" color:background-color="#EEEDFE" color:border-color="#534AB7">
+        <dc:Bounds x="1160" y="257" width="130" height="76" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Approver_di" bpmnElement="Task_Approver" color:background-color="#EEEDFE" color:border-color="#534AB7">
+        <dc:Bounds x="1330" y="257" width="130" height="76" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_WhoDecides_di" bpmnElement="Gateway_WhoDecides" color:background-color="#FFFFFF" color:border-color="#444441">
+        <dc:Bounds x="1539" y="269" width="52" height="52" />
+        <bpmndi:BPMNLabel><dc:Bounds x="1571" y="239" width="120" height="28" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Confirm_di" bpmnElement="Task_Confirm" color:background-color="#FAEEDA" color:border-color="#854F0B">
+        <dc:Bounds x="1670" y="707" width="130" height="76" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_Join_di" bpmnElement="Gateway_Join" color:background-color="#FFFFFF" color:border-color="#444441">
+        <dc:Bounds x="1879" y="569" width="52" height="52" />
+        <bpmndi:BPMNLabel><dc:Bounds x="1911" y="539" width="120" height="28" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Plan_di" bpmnElement="Task_Plan" color:background-color="#FAEEDA" color:border-color="#854F0B">
+        <dc:Bounds x="2010" y="557" width="130" height="76" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_Arrives_di" bpmnElement="Event_Arrives" color:background-color="#FAEEDA" color:border-color="#854F0B">
+        <dc:Bounds x="2225" y="575" width="40" height="40" />
+        <bpmndi:BPMNLabel><dc:Bounds x="2185" y="621" width="120" height="28" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Count_di" bpmnElement="Task_Count" color:background-color="#FAEEDA" color:border-color="#854F0B">
+        <dc:Bounds x="2350" y="557" width="130" height="76" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Reconcile_di" bpmnElement="Task_Reconcile" color:background-color="#EEEDFE" color:border-color="#534AB7">
+        <dc:Bounds x="2520" y="257" width="130" height="76" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_DockDecision_di" bpmnElement="Gateway_DockDecision" color:background-color="#FFFFFF" color:border-color="#444441">
+        <dc:Bounds x="2729" y="569" width="52" height="52" />
+        <bpmndi:BPMNLabel><dc:Bounds x="2761" y="539" width="120" height="28" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_ReturnNote_di" bpmnElement="Task_ReturnNote" color:background-color="#F1EFE8" color:border-color="#5F5E5A">
+        <dc:Bounds x="2860" y="1007" width="130" height="76" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Block_di" bpmnElement="Task_Block" color:background-color="#FCEBEB" color:border-color="#A32D2D">
+        <dc:Bounds x="2860" y="1157" width="130" height="76" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Release_di" bpmnElement="Task_Release" color:background-color="#EAF3DE" color:border-color="#3B6D11">
+        <dc:Bounds x="3030" y="857" width="130" height="76" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Refused_di" bpmnElement="End_Refused" color:background-color="#FCEBEB" color:border-color="#A32D2D">
+        <dc:Bounds x="3075" y="1175" width="40" height="40" />
+        <bpmndi:BPMNLabel><dc:Bounds x="3035" y="1221" width="120" height="28" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_OnList_di" bpmnElement="End_OnList" color:background-color="#EAF3DE" color:border-color="#3B6D11">
+        <dc:Bounds x="3245" y="875" width="40" height="40" />
+        <bpmndi:BPMNLabel><dc:Bounds x="3205" y="921" width="120" height="28" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_1_di" bpmnElement="Flow_1" color:border-color="#5F5E5A">
+        <di:waypoint x="225" y="145" />
+        <di:waypoint x="310" y="145" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_2_di" bpmnElement="Flow_2" color:border-color="#5F5E5A">
+        <di:waypoint x="440" y="145" />
+        <di:waypoint x="460" y="145" />
+        <di:waypoint x="460" y="295" />
+        <di:waypoint x="480" y="295" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_3_di" bpmnElement="Flow_3" color:border-color="#5F5E5A">
+        <di:waypoint x="610" y="295" />
+        <di:waypoint x="689" y="295" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_4_di" bpmnElement="Flow_4" color:border-color="#A32D2D">
+        <di:waypoint x="715" y="321" />
+        <di:waypoint x="715" y="407" />
+        <bpmndi:BPMNLabel><dc:Bounds x="721" y="329" width="80" height="18" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_5_di" bpmnElement="Flow_5" color:border-color="#5F5E5A">
+        <di:waypoint x="741" y="295" />
+        <di:waypoint x="1029" y="295" />
+        <bpmndi:BPMNLabel><dc:Bounds x="749" y="273" width="80" height="18" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_6_di" bpmnElement="Flow_6" color:border-color="#A32D2D">
+        <di:waypoint x="780" y="445" />
+        <di:waypoint x="865" y="445" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_7_di" bpmnElement="Flow_7" color:border-color="#5F5E5A">
+        <di:waypoint x="1055" y="321" />
+        <di:waypoint x="1055" y="407" />
+        <bpmndi:BPMNLabel><dc:Bounds x="1061" y="329" width="80" height="18" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_8_di" bpmnElement="Flow_8" color:border-color="#5F5E5A">
+        <di:waypoint x="1081" y="295" />
+        <di:waypoint x="1160" y="295" />
+        <bpmndi:BPMNLabel><dc:Bounds x="1089" y="273" width="80" height="18" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_9_di" bpmnElement="Flow_9" color:border-color="#3B6D11">
+        <di:waypoint x="1120" y="445" />
+        <di:waypoint x="1205" y="445" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_10_di" bpmnElement="Flow_10" color:border-color="#5F5E5A">
+        <di:waypoint x="1290" y="295" />
+        <di:waypoint x="1330" y="295" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_11_di" bpmnElement="Flow_11" color:border-color="#5F5E5A">
+        <di:waypoint x="1460" y="295" />
+        <di:waypoint x="1539" y="295" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_12_di" bpmnElement="Flow_12" color:border-color="#5F5E5A">
+        <di:waypoint x="1565" y="321" />
+        <di:waypoint x="1565" y="745" />
+        <di:waypoint x="1670" y="745" />
+        <bpmndi:BPMNLabel><dc:Bounds x="1571" y="329" width="80" height="18" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_13_di" bpmnElement="Flow_13" color:border-color="#5F5E5A">
+        <di:waypoint x="1591" y="295" />
+        <di:waypoint x="1905" y="295" />
+        <di:waypoint x="1905" y="569" />
+        <bpmndi:BPMNLabel><dc:Bounds x="1599" y="273" width="80" height="18" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_14_di" bpmnElement="Flow_14" color:border-color="#5F5E5A">
+        <di:waypoint x="1800" y="745" />
+        <di:waypoint x="1905" y="745" />
+        <di:waypoint x="1905" y="621" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_15_di" bpmnElement="Flow_15" color:border-color="#5F5E5A">
+        <di:waypoint x="1931" y="595" />
+        <di:waypoint x="2010" y="595" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_16_di" bpmnElement="Flow_16" color:border-color="#5F5E5A">
+        <di:waypoint x="2140" y="595" />
+        <di:waypoint x="2225" y="595" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_17_di" bpmnElement="Flow_17" color:border-color="#5F5E5A">
+        <di:waypoint x="2265" y="595" />
+        <di:waypoint x="2350" y="595" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_18_di" bpmnElement="Flow_18" color:border-color="#5F5E5A">
+        <di:waypoint x="2480" y="595" />
+        <di:waypoint x="2500" y="595" />
+        <di:waypoint x="2500" y="295" />
+        <di:waypoint x="2520" y="295" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_19_di" bpmnElement="Flow_19" color:border-color="#5F5E5A">
+        <di:waypoint x="2650" y="295" />
+        <di:waypoint x="2709" y="295" />
+        <di:waypoint x="2709" y="595" />
+        <di:waypoint x="2729" y="595" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_20_di" bpmnElement="Flow_20" color:border-color="#3B6D11">
+        <di:waypoint x="2781" y="595" />
+        <di:waypoint x="3010" y="595" />
+        <di:waypoint x="3010" y="895" />
+        <di:waypoint x="3030" y="895" />
+        <bpmndi:BPMNLabel><dc:Bounds x="2926" y="873" width="80" height="18" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_21_di" bpmnElement="Flow_21" color:border-color="#5F5E5A">
+        <di:waypoint x="2781" y="595" />
+        <di:waypoint x="2840" y="595" />
+        <di:waypoint x="2840" y="1045" />
+        <di:waypoint x="2860" y="1045" />
+        <bpmndi:BPMNLabel><dc:Bounds x="2756" y="1023" width="80" height="18" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_22_di" bpmnElement="Flow_22" color:border-color="#A32D2D">
+        <di:waypoint x="2755" y="621" />
+        <di:waypoint x="2755" y="1195" />
+        <di:waypoint x="2860" y="1195" />
+        <bpmndi:BPMNLabel><dc:Bounds x="2761" y="629" width="80" height="18" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_23_di" bpmnElement="Flow_23" color:border-color="#3B6D11">
+        <di:waypoint x="2990" y="1045" />
+        <di:waypoint x="3010" y="1045" />
+        <di:waypoint x="3010" y="895" />
+        <di:waypoint x="3030" y="895" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_24_di" bpmnElement="Flow_24" color:border-color="#3B6D11">
+        <di:waypoint x="3160" y="895" />
+        <di:waypoint x="3245" y="895" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_25_di" bpmnElement="Flow_25" color:border-color="#A32D2D">
+        <di:waypoint x="2990" y="1195" />
+        <di:waypoint x="3075" y="1195" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

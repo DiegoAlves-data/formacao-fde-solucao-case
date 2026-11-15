@@ -36,9 +36,9 @@ beforeAll(async () => {
   registry = { listSuppliers: async () => [...kit.ctx.suppliers], listProducts: async () => [...kit.ctx.products] };
 });
 
-function checked(notaId: string): Invoice {
+function checked(invoiceId: string): Invoice {
   // #66 Uma cópia: as notas do kit são compartilhadas entre os testes e a conferência muda o estado.
-  const original = kitInvoice(kit, notaId);
+  const original = kitInvoice(kit, invoiceId);
   const invoice = withItems(original, original.items);
   invoice.check(kit.ctx);
   return invoice;

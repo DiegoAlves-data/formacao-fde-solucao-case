@@ -6,7 +6,7 @@ import { divergenceLabel } from "./labels";
 import { registerEvidence, type EvidenceProps } from "./registry";
 
 /** #66: o que a frase da evidência do checkItemSemCadastro (#35) diz do item; o que não casa fica null. */
-interface ItemSemCadastro {
+interface UnregisteredItem {
   description: string | null;
   value: string | null;
   supplierCode: string | null;
@@ -22,7 +22,7 @@ function supplierCodeOf(reference: unknown): string | null {
   return reference.includes("/") && code !== "" ? code : null;
 }
 
-function parseItem(evidence: EvidenceDto): ItemSemCadastro {
+function parseItem(evidence: EvidenceDto): UnregisteredItem {
   const text = typeof evidence.description === "string" ? evidence.description : "";
   return {
     description: DESCRIPTION.exec(text)?.[1] ?? null,
@@ -83,7 +83,7 @@ function orderField(order: EvidenceDto): ComparisonField {
  * três buscas que falharam, o valor em risco, e para onde a aprovação manda (AC-4 e AC-5). Evidência
  * ausente cai no genérico; frase fora do formato do #35 mostra a frase no lugar do campo.
  */
-function ItemSemCadastroEvidence({ divergence }: EvidenceProps) {
+function UnregisteredItemEvidence({ divergence }: EvidenceProps) {
   const evidence = Array.isArray(divergence.evidence) ? divergence.evidence : [];
   const record = evidence.find((e) => e?.source === "erp_cadastro");
   if (!record) return <GenericEvidence divergence={divergence} />;
@@ -113,4 +113,4 @@ function ItemSemCadastroEvidence({ divergence }: EvidenceProps) {
   );
 }
 
-registerEvidence("E8", ItemSemCadastroEvidence);
+registerEvidence("E8", UnregisteredItemEvidence);

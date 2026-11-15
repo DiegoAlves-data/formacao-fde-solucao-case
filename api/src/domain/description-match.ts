@@ -202,10 +202,20 @@ function sameWithout(a: Normalized, b: Normalized): boolean {
   return true;
 }
 
-/** #66: a mesma palavra, ou uma abreviação escrita com ponto que é prefixo da outra. */
+/**
+ * #66: quantas letras a palavra precisa ter a mais que a abreviação com ponto. Na NF-e o ponto
+ * também separa palavras inteiras (SUCO.LIMA.1L), e "lima." não pode abreviar "limao".
+ */
+const MIN_ABBREVIATED_LETTERS = 3;
+
+function abbreviates(token: string, word: string): boolean {
+  return word.startsWith(token) && word.length - token.length >= MIN_ABBREVIATED_LETTERS;
+}
+
+/** #66: a mesma palavra, ou uma abreviação escrita com ponto que encurta a outra. */
 function sameWord(a: string, b: string, aAbbreviated: Set<string>, bAbbreviated: Set<string>): boolean {
   if (a === b) return true;
-  return (aAbbreviated.has(a) && b.startsWith(a)) || (bAbbreviated.has(b) && a.startsWith(b));
+  return (aAbbreviated.has(a) && abbreviates(a, b)) || (bAbbreviated.has(b) && abbreviates(b, a));
 }
 
 interface WordComparison {

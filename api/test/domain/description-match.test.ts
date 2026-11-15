@@ -298,3 +298,19 @@ describe('abreviação só com ponto ou da tabela fechada (#66)', () => {
     expect(matchByDescription('Refrigerante cola 1.5 L', ['Refrigerante cola 1500 ml'])).toBe(0);
   });
 });
+
+describe('abreviação com ponto só quando encurta a palavra (#66)', () => {
+  it('AC-3: palavra inteira seguida de ponto não abrevia outra quase igual', () => {
+    expect(matchByDescription('Suco lima.', ['Suco limao'])).toBeNull();
+    expect(matchByDescription('Suco lima. 1L', ['Suco limao 1L'])).toBeNull();
+  });
+
+  it('AC-3: o ponto como separador da NF-e não vira abreviação', () => {
+    expect(matchByDescription('SUCO.LIMA.1L', ['Suco limao 1L'])).toBeNull();
+  });
+
+  it('AC-2: abreviação com ponto que encurta a palavra continua casando', () => {
+    expect(matchByDescription('Arroz parb. 5kg', ['Arroz parboilizado 5 kg'])).toBe(0);
+    expect(matchByDescription('Biscoito recheado choc. 140g', ['Biscoito recheado chocolate 140g'])).toBe(0);
+  });
+});

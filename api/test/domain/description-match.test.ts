@@ -8,7 +8,7 @@ import {
   type DescriptionSuggester,
 } from '../../src/domain/description-match.js';
 
-/** Sugestor falso: devolve a sugestão fixa e conta as chamadas, sem rede. */
+/** #66: sugestor falso, devolve a sugestão fixa e conta as chamadas, sem rede. */
 function fakeSuggester(answer: (description: string, candidates: readonly string[]) => number | null) {
   const calls: { description: string; candidates: readonly string[] }[] = [];
   const suggester: DescriptionSuggester = {
@@ -66,8 +66,19 @@ describe('regra sozinha (sem sugestão do Claude)', () => {
 });
 
 describe('confirmsDescriptionMatch', () => {
-  it('AC-2: confirma descrições parecidas com a mesma medida', () => {
+  it('AC-2: confirma descrições parecidas com a mesma medida, com palavra abreviada', () => {
     expect(confirmsDescriptionMatch('Refrigerante cola 2L garrafa', 'Refrigerante cola 2 L')).toBe(true);
+    expect(confirmsDescriptionMatch('Refri cola 2L garrafa pet', 'Refrigerante cola 2 L')).toBe(true);
+  });
+
+  it('AC-3: sabor diferente com o resto igual não confirma (cada lado tem palavra que o outro não tem)', () => {
+    expect(confirmsDescriptionMatch('Biscoito recheado chocolate 140g', 'Biscoito recheado morango 140g')).toBe(false);
+  });
+
+  it('AC-3: palavra de variante de um lado só não confirma', () => {
+    expect(confirmsDescriptionMatch('Refrigerante cola zero 2L', 'Refrigerante cola 2L')).toBe(false);
+    expect(confirmsDescriptionMatch('Iogurte light 170 g', 'Iogurte 170 g')).toBe(false);
+    expect(confirmsDescriptionMatch('Refrigerante cola zero 2L', 'Refri cola zero 2 L')).toBe(true);
   });
 
   it('AC-3: não confirma medida diferente nem sabor diferente', () => {
@@ -81,7 +92,7 @@ describe('confirmsDescriptionMatch', () => {
 });
 
 describe('sugestão do Claude confirmada pela regra', () => {
-  const description = 'Refrigerante cola 2L garrafa';
+  const description = 'Refri cola 2L garrafa pet';
   const candidates = ['Refrigerante cola 2 L', 'Refrigerante guaraná 2 L'];
 
   it('AC-2: sem sugestão, a regra sozinha não é forte o bastante', () => {
@@ -102,6 +113,21 @@ describe('sugestão do Claude confirmada pela regra', () => {
     expect(matchByDescription(desc, cands)).toBeNull();
   });
 
+  it('AC-3: Claude sugere a variante "zero" para a cola comum e a regra recusa', async () => {
+    const cands = ['Refrigerante cola 2L', 'Refrigerante cola zero 2L'];
+    const { suggester } = fakeSuggester(() => 1);
+    await primeDescriptionMatches(suggester, [{ description: 'Refrigerante cola 2L', candidates: cands }]);
+    expect(matchByDescription('Refrigerante cola 2L', cands)).toBe(0);
+  });
+
+  it('AC-3: sugestão recusada quando outro candidato pontua estritamente mais na regra', async () => {
+    const desc = 'Refri cola 2L garrafa pet';
+    const cands = ['Refrigerante cola 2 L', 'Refrigerante cola garrafa 2 L'];
+    const { suggester } = fakeSuggester(() => 0);
+    await primeDescriptionMatches(suggester, [{ description: desc, candidates: cands }]);
+    expect(matchByDescription(desc, cands)).not.toBe(0);
+  });
+
   it('AC-2: sugestão não confirmada ainda deixa a regra sozinha decidir', async () => {
     const cands = ['Feijão 1 kg', 'Arroz 5 kg'];
     const { suggester } = fakeSuggester(() => 0);
@@ -110,10 +136,11 @@ describe('sugestão do Claude confirmada pela regra', () => {
   });
 
   it('AC-3: Claude falhando, a regra sozinha decide e nada fica guardado', async () => {
-    await primeDescriptionMatches(failingSuggester, [
+    const failures = await primeDescriptionMatches(failingSuggester, [
       { description, candidates },
       { description: 'Arroz 5kg', candidates: ['Feijão 1 kg', 'Arroz 5 kg'] },
     ]);
+    expect(failures).toBe(2);
     expect(matchByDescription(description, candidates)).toBeNull();
     expect(matchByDescription('Arroz 5kg', ['Feijão 1 kg', 'Arroz 5 kg'])).toBe(1);
 
@@ -132,9 +159,14 @@ describe('sugestão do Claude confirmada pela regra', () => {
     await primeDescriptionMatches(decimal, [{ description: 'Refrigerante cola 2 L lata', candidates }]);
     expect(matchByDescription('Refrigerante cola 2 L lata', candidates)).toBeNull();
 
-    // O null ficou guardado: pedir de novo não chama o Claude outra vez.
+    // #66: o null ficou guardado, pedir de novo não chama o Claude outra vez.
     await primeDescriptionMatches(suggester, [{ description, candidates }]);
     expect(calls).toHaveLength(1);
+  });
+
+  it('AC-2: primeDescriptionMatches devolve 0 quando nenhum pedido falha', async () => {
+    const { suggester } = fakeSuggester(() => 0);
+    expect(await primeDescriptionMatches(suggester, [{ description, candidates }])).toBe(0);
   });
 
   it('AC-2: pedidos repetidos são deduplicados e o cache não chama o Claude de novo', async () => {
@@ -152,7 +184,7 @@ describe('sugestão do Claude confirmada pela regra', () => {
     await primeDescriptionMatches(suggester, [{ description, candidates }]);
     const reordered = ['Refrigerante guaraná 2 L', 'Refrigerante cola 2 L'];
     expect(matchByDescription(description, reordered)).toBeNull();
-    expect(matchByDescription('Refrigerante cola 2L pet', candidates)).toBeNull();
+    expect(matchByDescription('Refri cola 2L garrafa', candidates)).toBeNull();
   });
 
   it('AC-2: clearDescriptionMatches esquece as sugestões', async () => {
@@ -164,7 +196,7 @@ describe('sugestão do Claude confirmada pela regra', () => {
 });
 
 describe('withDescriptionMatches: o cache vale só para uma rodada', () => {
-  const description = 'Refrigerante cola 2L garrafa';
+  const description = 'Refri cola 2L garrafa pet';
   const candidates = ['Refrigerante cola 2 L', 'Refrigerante guaraná 2 L'];
 
   it('AC-2: dentro de run, a sugestão confirmada vale', async () => {
@@ -179,6 +211,33 @@ describe('withDescriptionMatches: o cache vale só para uma rodada', () => {
     const { suggester } = fakeSuggester(() => 0);
     await withDescriptionMatches(suggester, [{ description, candidates }], async () => undefined);
     expect(matchByDescription(description, candidates)).toBeNull();
+  });
+
+  it('AC-2: onSuggestionFailures recebe o total de falhas antes de run', async () => {
+    const order: string[] = [];
+    let reported = 0;
+    await withDescriptionMatches(
+      failingSuggester,
+      [{ description, candidates }, { description: 'Arroz 5kg', candidates: ['Arroz 5 kg'] }],
+      () => {
+        order.push('run');
+      },
+      (failures) => {
+        reported = failures;
+        order.push('falhas');
+      },
+    );
+    expect(reported).toBe(2);
+    expect(order).toEqual(['falhas', 'run']);
+  });
+
+  it('AC-2: onSuggestionFailures não é chamado quando nada falha', async () => {
+    const { suggester } = fakeSuggester(() => 0);
+    let called = false;
+    await withDescriptionMatches(suggester, [{ description, candidates }], () => undefined, () => {
+      called = true;
+    });
+    expect(called).toBe(false);
   });
 
   it('AC-2: o cache é limpo também quando run lança', async () => {

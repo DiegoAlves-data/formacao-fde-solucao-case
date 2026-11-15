@@ -45,11 +45,13 @@ function validIndex(index: unknown, length: number): number | null {
 /**
  * Pede ao sugestor o casamento de cada pedido ainda fora do cache e guarda a resposta (inclusive null).
  * Se o sugestor falha num pedido, nada é guardado para ele e a regra sozinha decide (falha fechada).
+ * Devolve quantos pedidos falharam, para quem chama deixar rastro.
  */
 export async function primeDescriptionMatches(
   suggester: DescriptionSuggester,
   requests: readonly DescriptionMatchRequest[],
-): Promise<void> {
+): Promise<number> {
+  let failures = 0;
   const seen = new Set<string>();
   for (const { description, candidates } of requests) {
     const key = cacheKey(description, candidates);
@@ -59,9 +61,10 @@ export async function primeDescriptionMatches(
       const index = await suggester.suggest(description, candidates);
       remember(key, validIndex(index, candidates.length));
     } catch {
-      // Falha fechada: sem sugestão, a regra decide sozinha.
+      failures++; // #66: falha fechada, sem sugestão a regra decide sozinha.
     }
   }
+  return failures;
 }
 
 /** Esquece todas as sugestões guardadas. */
@@ -73,15 +76,18 @@ export function clearDescriptionMatches(): void {
  * É este o jeito de usar o Claude numa rodada de conferência: pede as sugestões, roda `run`
  * (que chama as verificações, e por elas `matchByDescription`) e limpa o cache no fim, mesmo
  * quando `run` lança. Um isolate do Worker sobrevive entre invocações, e uma sugestão velha
- * não pode decidir a nota seguinte.
+ * não pode decidir a nota seguinte. Se algum pedido ao Claude falha, `onSuggestionFailures`
+ * recebe o total antes de `run`.
  */
 export async function withDescriptionMatches<T>(
   suggester: DescriptionSuggester,
   requests: readonly DescriptionMatchRequest[],
   run: () => T | Promise<T>,
+  onSuggestionFailures?: (failures: number) => void,
 ): Promise<T> {
   try {
-    await primeDescriptionMatches(suggester, requests);
+    const failures = await primeDescriptionMatches(suggester, requests);
+    if (failures > 0) onSuggestionFailures?.(failures);
     return await run();
   } finally {
     clearDescriptionMatches();
@@ -89,9 +95,28 @@ export async function withDescriptionMatches<T>(
 }
 
 // ---------------------------------------------------------------------------------------------
-// A regra determinística.
+// #66: a regra determinística.
 
 const STOPWORDS = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'a', 'o', 'em', 'para']);
+
+/**
+ * #66: palavras de variante. Mudam o produto (cola zero não é cola), então precisam aparecer dos
+ * dois lados ou de nenhum, como o "sem X". Lista fixa, já sem acento.
+ */
+const VARIANT_WORDS = new Set([
+  'zero',
+  'diet',
+  'light',
+  'integral',
+  'desnatado',
+  'semidesnatado',
+  'organico',
+  'tradicional',
+  'original',
+]);
+
+/** #66: abreviação mínima que conta como a mesma palavra (refri ~ refrigerante). */
+const MIN_PREFIX = 4;
 const MEASURE = /(\d+(?:\.\d+)?)\s*(kg|mg|ml|g|l|un|cx)(?![a-z0-9])/g;
 const TO_BASE: Record<string, { factor: number; unit: string }> = {
   kg: { factor: 1000, unit: 'g' },
@@ -106,7 +131,7 @@ const TO_BASE: Record<string, { factor: number; unit: string }> = {
 interface Normalized {
   words: Set<string>;
   measures: Set<string>;
-  /** As palavras que vêm depois de "sem" ("sem açúcar" guarda "acucar"): mudam o produto. */
+  /** #66: as palavras que vêm depois de "sem" ("sem açúcar" guarda "acucar"); mudam o produto. */
   without: Set<string>;
 }
 
@@ -145,7 +170,7 @@ function sameMeasures(a: Normalized, b: Normalized): boolean {
 }
 
 /**
- * "sem X" precisa estar dos dois lados ou de nenhum. Isso recusa "sem açúcar" × "com açúcar"
+ * #66: "sem X" precisa estar dos dois lados ou de nenhum. Isso recusa "sem açúcar" × "com açúcar"
  * e também "sem lactose" contra um candidato que não diz "sem lactose".
  */
 function sameWithout(a: Normalized, b: Normalized): boolean {
@@ -154,17 +179,59 @@ function sameWithout(a: Normalized, b: Normalized): boolean {
   return true;
 }
 
-function jaccard(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 && b.size === 0) return 0;
+/** #66: a mesma palavra, ou uma abreviação de 4 letras ou mais que é prefixo da outra. */
+function sameWord(a: string, b: string): boolean {
+  if (a === b) return true;
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  return short.length >= MIN_PREFIX && long.startsWith(short);
+}
+
+interface WordComparison {
+  common: number;
+  onlyA: number;
+  onlyB: number;
+}
+
+/** #66: pareia as palavras um a um, a igual primeiro e depois a abreviada. */
+function compareWords(a: Set<string>, b: Set<string>): WordComparison {
+  const free = new Set(b);
+  const unmatched: string[] = [];
   let common = 0;
-  for (const w of a) if (b.has(w)) common++;
-  return common / (a.size + b.size - common);
+  for (const w of a) {
+    if (free.delete(w)) common++;
+    else unmatched.push(w);
+  }
+  for (const w of unmatched) {
+    const partner = [...free].find((other) => sameWord(w, other));
+    if (partner === undefined) continue;
+    free.delete(partner);
+    common++;
+  }
+  return { common, onlyA: a.size - common, onlyB: b.size - common };
+}
+
+function sameVariants(a: Normalized, b: Normalized): boolean {
+  for (const w of VARIANT_WORDS) if (a.words.has(w) !== b.words.has(w)) return false;
+  return true;
+}
+
+/**
+ * #66: a pontuação da regra (Jaccard com abreviações) ou null quando a regra recusa o par: medida
+ * diferente, "sem X" ou variante de um lado só, ou cada lado com uma palavra que o outro não tem
+ * (chocolate × morango). Palavra a mais de um lado só não recusa: o Jaccard decide.
+ */
+function ruleScore(description: Normalized, candidate: Normalized): number | null {
+  if (!sameMeasures(description, candidate) || !sameWithout(description, candidate)) return null;
+  if (!sameVariants(description, candidate)) return null;
+  const { common, onlyA, onlyB } = compareWords(description.words, candidate.words);
+  if (onlyA > 0 && onlyB > 0) return null;
+  const union = common + onlyA + onlyB;
+  return union === 0 ? 0 : common / union;
 }
 
 function score(description: Normalized, candidate: Normalized, threshold: number): number | null {
-  if (!sameMeasures(description, candidate) || !sameWithout(description, candidate)) return null;
-  const j = jaccard(description.words, candidate.words);
-  return j >= threshold ? j : null;
+  const s = ruleScore(description, candidate);
+  return s !== null && s >= threshold ? s : null;
 }
 
 /** A regra confirma que a descrição e o candidato são o mesmo produto (mesma medida, palavras parecidas). */
@@ -182,18 +249,24 @@ export function confirmsDescriptionMatch(description: string, candidate: string)
 export function matchByDescription(description: string, candidates: readonly string[]): number | null {
   if (candidates.length === 0 || description.trim() === '') return null;
 
+  const target = normalize(description);
+  const normalized = candidates.map(normalize);
+
   const suggested = suggestions.get(cacheKey(description, candidates));
   if (suggested !== undefined && suggested !== null) {
-    const candidate = candidates[suggested];
-    if (candidate !== undefined && confirmsDescriptionMatch(description, candidate)) return suggested;
+    const candidate = normalized[suggested];
+    const suggestedScore = candidate === undefined ? null : score(target, candidate, CONFIRM_THRESHOLD);
+    const beaten =
+      suggestedScore !== null &&
+      normalized.some((other, i) => i !== suggested && (ruleScore(target, other) ?? -1) > suggestedScore);
+    if (suggestedScore !== null && !beaten) return suggested;
   }
 
-  const target = normalize(description);
   let best: number | null = null;
   let bestScore = -1;
   let tied = false;
-  candidates.forEach((candidate, index) => {
-    const s = score(target, normalize(candidate), STRONG_THRESHOLD);
+  normalized.forEach((candidate, index) => {
+    const s = score(target, candidate, STRONG_THRESHOLD);
     if (s === null) return;
     if (s > bestScore) {
       best = index;

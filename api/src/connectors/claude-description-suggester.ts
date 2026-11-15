@@ -23,11 +23,16 @@ const SYSTEM_PROMPT = [
   'Responda APENAS com JSON no formato {"index": <número do candidato ou null>}, sem mais nada.',
 ].join(' ');
 
+/** #66: escapa o texto para que ele não feche as tags de dados por dentro. */
+function escapeData(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function userMessage(description: string, candidates: readonly string[]): string {
-  const list = candidates.map((c, i) => `${i}. ${c}`).join('\n');
+  const list = candidates.map((c, i) => `${i}. ${escapeData(c)}`).join('\n');
   return [
     'Descrição da nota:',
-    `<descricao>\n${description}\n</descricao>`,
+    `<descricao>\n${escapeData(description)}\n</descricao>`,
     'Produtos cadastrados (o número antes do ponto é o índice):',
     `<candidatos>\n${list}\n</candidatos>`,
   ].join('\n');

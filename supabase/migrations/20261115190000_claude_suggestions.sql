@@ -14,10 +14,14 @@ create table public.claude_suggestions (
   output jsonb,
   status text not null,
   model text not null,
-  -- #66 Mensagem curta da falha (classe e começo da mensagem), nunca segredo.
+  -- #66 Falha curta: classe e, só para erro do próprio executor, o começo da mensagem; nunca segredo.
   error text,
+  -- #66 Tentativas com erro; o laço para em 3 e espera 5 min * 2^attempts desde updated_at (#66).
+  attempts integer not null default 0,
   created_at timestamptz not null default now(),
-  constraint claude_suggestions_status_check check (status in ('ok', 'erro')),
+  -- #66 Última escrita da linha; o executor a grava em cada tentativa, base da espera entre tentativas.
+  updated_at timestamptz not null default now(),
+  constraint claude_suggestions_status_check check (status in ('ok', 'error')),
   constraint claude_suggestions_task_input_key_key unique (task, input_key)
 );
 alter table public.claude_suggestions enable row level security;

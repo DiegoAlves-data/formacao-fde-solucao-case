@@ -1,6 +1,6 @@
-// Testes da chamada ao Claude pelo Agent SDK, com o query() falso (#66).
+/** Testes da chamada ao Claude pelo Agent SDK, com o query() falso (#66). */
 import { describe, expect, it } from 'vitest';
-import { ClaudeError, createAsk, DEFAULT_MODEL, type QueryFn } from '../src/claude.ts';
+import { ASK_TIMEOUT_MS, ClaudeError, createAsk, DEFAULT_MODEL, type QueryFn } from '../src/claude.ts';
 
 const SCHEMA = { type: 'object', properties: { match: { type: ['string', 'null'] } }, required: ['match'] };
 
@@ -65,5 +65,37 @@ describe('createAsk (#66)', () => {
   it('sessão que termina sem resultado é erro', async () => {
     const { query } = fakeQuery([{ type: 'assistant' }]);
     await expect(createAsk(query)({ system: 's', prompt: 'p', schema: SCHEMA })).rejects.toBeInstanceOf(ClaudeError);
+  });
+
+  it('passa um AbortController ao SDK e o aborta depois do prazo, virando ClaudeError', async () => {
+    let signal: AbortSignal | undefined;
+    const query: QueryFn = (p) => {
+      signal = p.options.abortController?.signal;
+      return (async function* () {
+        await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve()));
+        yield { type: 'assistant' };
+      })();
+    };
+    const error = await createAsk(query, 20)({ system: 's', prompt: 'p', schema: SCHEMA }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ClaudeError);
+    expect((error as Error).message).toBe('claude: sem resposta em 20 ms');
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it('o prazo vale mesmo quando o SDK ignora o aborto', async () => {
+    const query: QueryFn = () =>
+      (async function* () {
+        await new Promise<void>(() => {});
+        yield { type: 'assistant' };
+      })();
+    await expect(createAsk(query, 20)({ system: 's', prompt: 'p', schema: SCHEMA })).rejects.toBeInstanceOf(ClaudeError);
+  });
+
+  it('o prazo padrão é de 60 s e o relógio é limpo quando a resposta chega', async () => {
+    expect(ASK_TIMEOUT_MS).toBe(60_000);
+    const { query, params } = fakeQuery([{ type: 'result', subtype: 'success', structured_output: { match: 'x' } }]);
+    await createAsk(query)({ system: 's', prompt: 'p', schema: SCHEMA });
+    const controller = (params[0] as { options: { abortController: AbortController } }).options.abortController;
+    expect(controller.signal.aborted).toBe(false);
   });
 });

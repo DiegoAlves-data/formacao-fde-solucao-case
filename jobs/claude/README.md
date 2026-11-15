@@ -10,9 +10,16 @@ determinística confirma cada uma. Sem sugestão, a regra decide sozinha (fail-c
 
 Cada rodada, para cada tarefa: lê o que está pendente, tira as chaves que já estão `ok` em
 `claude_suggestions`, pergunta ao Claude no máximo 50 por tarefa, em sequência, e grava cada
-resposta. A falha de um item vira uma linha com `status = 'erro'` e uma mensagem curta, e a rodada
-segue; a próxima rodada tenta de novo. Cada tarefa escreve uma linha no log:
-`tarefa X: N pendentes, ok A, erro B`.
+resposta. Cada pergunta tem prazo de 60 s. As chaves nunca tentadas vão primeiro, depois as que
+erraram, e o teto de 50 vale depois dessa ordem.
+
+A falha de um item vira uma linha com `status = 'error'`, `attempts + 1` e uma mensagem curta. A
+mensagem só leva o texto dos erros do próprio executor (`ClaudeError` e `SupabaseError`); qualquer
+outro erro grava só o nome da classe. A chave em erro volta à fila depois de `5 min * 2^attempts`
+desde `updated_at`, e para de ser tentada em 3 tentativas. Cada tarefa escreve uma linha no log:
+`tarefa X: N pendentes, ok A, erro B`, com o primeiro erro, as chaves em espera e as linhas do banco
+descartadas por fora do formato quando houver. A tarefa em que nenhum item deu certo e algum falhou
+conta como falha, e o processo sai com 1.
 
 ## Tarefas
 

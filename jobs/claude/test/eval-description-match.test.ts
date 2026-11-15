@@ -1,6 +1,6 @@
-// Testes do conjunto do eval do casamento de descrição (#66, AC-6): só o kit, nunca o gabarito.
+/** Testes do conjunto do eval do casamento de descrição (#66, AC-6): só o kit, nunca o gabarito. */
 import { describe, expect, it } from 'vitest';
-import { buildEvalDataset, summarize, variants } from '../src/eval-description-match.ts';
+import { buildEvalDataset, narrowKit, summarize, variants } from '../src/eval-description-match.ts';
 
 const PRODUTOS = [
   { sku: 'SKU-1', descricao: 'Refrigerante cola 2 L', fornecedor_id: 'F02', codigo_fornecedor: 'F02-001' },
@@ -9,7 +9,7 @@ const PRODUTOS = [
 ];
 const NOTAS = [
   {
-    chave: 'N1',
+    chave: 'N1', // ADR-001
     fornecedor_id: 'F02',
     itens: [
       { codigo_fornecedor: 'F02-001', sku: 'SKU-1', descricao: 'Refrigerante cola 2 L' },
@@ -32,23 +32,23 @@ describe('variantes do eval (#66, AC-6)', () => {
   });
 
   it('converte medida com vírgula e de ml para L', () => {
-    const medida = (d: string) => variants(d).find((x) => x.variant === 'medida-reescrita')?.description;
-    expect(medida('Água mineral 1,5 L')).toBe('Água mineral 1500 ml');
-    expect(medida('Shampoo 350 ml')).toBe('Shampoo 0,35 L');
-    expect(medida('Sabão em pó 1,6 kg')).toBe('Sabão em pó 1600 g');
-    expect(medida('Banana prata kg')).toBeUndefined();
+    const measure = (d: string) => variants(d).find((x) => x.variant === 'medida-reescrita')?.description;
+    expect(measure('Água mineral 1,5 L')).toBe('Água mineral 1500 ml');
+    expect(measure('Shampoo 350 ml')).toBe('Shampoo 0,35 L');
+    expect(measure('Sabão em pó 1,6 kg')).toBe('Sabão em pó 1600 g');
+    expect(measure('Banana prata kg')).toBeUndefined();
   });
 });
 
 describe('conjunto do eval (#66, AC-6)', () => {
   it('positivos vêm dos itens com sku; negativos, dos itens sem sku e das medidas dobradas', () => {
-    const casos = buildEvalDataset(NOTAS, PRODUTOS);
-    const positivos = casos.filter((c) => c.expected !== null);
-    const negativos = casos.filter((c) => c.expected === null);
-    expect(positivos.length).toBeGreaterThan(0);
-    expect(positivos.every((c) => c.expected === 'Refrigerante cola 2 L')).toBe(true);
-    expect(positivos.every((c) => c.input.candidates.join('|') === 'Água de coco 1 L|Banana prata kg|Refrigerante cola 2 L')).toBe(true);
-    expect(negativos.map((c) => c.input.description)).toEqual([
+    const cases = buildEvalDataset(NOTAS, PRODUTOS);
+    const positives = cases.filter((c) => c.expected !== null);
+    const negatives = cases.filter((c) => c.expected === null);
+    expect(positives.length).toBeGreaterThan(0);
+    expect(positives.every((c) => c.expected === 'Refrigerante cola 2 L')).toBe(true);
+    expect(positives.every((c) => c.input.candidates.join('|') === 'Água de coco 1 L|Banana prata kg|Refrigerante cola 2 L')).toBe(true);
+    expect(negatives.map((c) => c.input.description)).toEqual([
       'Isotônico limão 500 ml (lançamento)',
       'Refrigerante cola 4 L',
       'Água de coco 2 L',
@@ -69,5 +69,22 @@ describe('conjunto do eval (#66, AC-6)', () => {
     expect(r.precision).toBeCloseTo(1 / 3);
     expect(r.recall).toBeCloseTo(1 / 3);
     expect(r.byVariant.a).toEqual({ total: 2, correct: 1, accuracy: 0.5 });
+  });
+});
+
+describe('leitura do kit estreitada por guard (#66, AC-6)', () => {
+  it('descarta as linhas fora do formato, conta e segue', () => {
+    const result = narrowKit(
+      [...NOTAS, { chave: 'N2', fornecedor_id: 'F02', itens: [{ sku: null }] }, 'lixo'],
+      [...PRODUTOS, { sku: 'SKU-9', descricao: null }],
+    );
+    expect(result.notas).toEqual(NOTAS);
+    expect(result.produtos).toEqual(PRODUTOS);
+    expect(result.dropped).toBe(3);
+  });
+
+  it('um arquivo que não é uma lista é erro, nomeando o arquivo', () => {
+    expect(() => narrowKit({}, [])).toThrow(/notas\.json/);
+    expect(() => narrowKit([], 'x')).toThrow(/produtos\.json/);
   });
 });

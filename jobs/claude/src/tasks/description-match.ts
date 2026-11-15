@@ -1,43 +1,33 @@
-// Tarefa description-match (#66): sugere, para o item da nota sem cadastro, qual descrição de
-// produto do fornecedor é o mesmo item. É só sugestão: a regra determinística do Worker
-// (api/src/domain, #66) confirma, e sem sugestão a regra decide sozinha (fail-closed).
+/**
+ * Tarefa description-match (#66): sugere, para o item da nota sem cadastro, qual descrição de
+ * produto do fornecedor é o mesmo item. É só sugestão: a regra determinística do Worker
+ * (api/src/domain, #66) confirma, e sem sugestão a regra decide sozinha (fail-closed).
+ */
 import { createHash } from 'node:crypto';
 import type { Ask } from '../claude.ts';
 import type { Db } from '../supabase.ts';
+import { isRecord, partitionRows } from '../guards.ts';
+import { isKitNota, isKitNotaItem, isKitProduto, type KitNota, type KitNotaItem, type KitProduto } from '../kit-rows.ts';
 import type { ClaudeTask, PendingRequest } from '../task.ts';
 
 export type DescriptionMatchInput = { readonly description: string; readonly candidates: readonly string[] };
 export type DescriptionMatchOutput = { readonly match: string | null };
 
-export type KitNota = { readonly chave: string; readonly fornecedor_id: string };
-export type KitNotaItem = {
-  readonly chave: string;
-  readonly codigo_fornecedor: string;
-  readonly sku: string | null;
-  readonly descricao: string;
-};
-export type KitProduto = {
-  readonly sku: string;
-  readonly descricao: string;
-  readonly fornecedor_id: string;
-  readonly codigo_fornecedor: string;
-};
-
 const collator = new Intl.Collator('pt-BR');
 
-/** #66 Ordena os candidatos como o Worker ordena: localeCompare 'pt-BR'. */
+/** #66 Ordena os candidatos como o Worker ordena (Intl.Collator pt-BR), sem tirar os repetidos. */
 export function sortCandidates(candidates: Iterable<string>): string[] {
-  return [...new Set(candidates)].sort((a, b) => collator.compare(a, b));
+  return [...candidates].sort((a, b) => collator.compare(a, b));
 }
 
 /**
  * #66 A chave do pedido: sha256 hex de `descrição + "\n" + candidatos ordenados unidos por "\n"`.
  * O Worker (#66, api/src/domain) calcula a mesma chave para achar a sugestão; como a função ordena
- * os candidatos por conta própria, a ordem de entrada não muda a chave.
+ * os candidatos por conta própria, a ordem de entrada não muda a chave. Não deduplica, como o Worker:
+ * o vetor fixo de test/description-match.test.ts é o mesmo de api/test/connectors/claude-suggestions.test.ts.
  */
 export function descriptionMatchKey(description: string, candidates: readonly string[]): string {
-  const sorted = [...candidates].sort((a, b) => collator.compare(a, b));
-  return createHash('sha256').update(`${description}\n${sorted.join('\n')}`).digest('hex');
+  return createHash('sha256').update(`${description}\n${sortCandidates(candidates).join('\n')}`).digest('hex');
 }
 
 /**
@@ -46,30 +36,30 @@ export function descriptionMatchKey(description: string, candidates: readonly st
  * a mesma entrada em várias notas vira um pedido só.
  */
 export function buildRequests(
-  notas: readonly KitNota[],
-  itens: readonly KitNotaItem[],
-  produtos: readonly KitProduto[],
+  invoices: readonly KitNota[],
+  items: readonly KitNotaItem[],
+  products: readonly KitProduto[],
 ): PendingRequest<DescriptionMatchInput>[] {
-  const fornecedorDaNota = new Map(notas.map((n) => [n.chave, n.fornecedor_id]));
-  const codigos = new Set(produtos.map((p) => `${p.fornecedor_id}\u0000${p.codigo_fornecedor}`));
-  const descricoes = new Map<string, string[]>();
-  for (const p of produtos) {
-    const lista = descricoes.get(p.fornecedor_id) ?? [];
-    lista.push(p.descricao);
-    descricoes.set(p.fornecedor_id, lista);
+  const supplierByInvoice = new Map(invoices.map((n) => [n.chave, n.fornecedor_id]));
+  const codes = new Set(products.map((p) => `${p.fornecedor_id}\u0000${p.codigo_fornecedor}`));
+  const descriptions = new Map<string, string[]>();
+  for (const p of products) {
+    const list = descriptions.get(p.fornecedor_id) ?? [];
+    list.push(p.descricao);
+    descriptions.set(p.fornecedor_id, list);
   }
-  const pedidos = new Map<string, PendingRequest<DescriptionMatchInput>>();
-  for (const item of itens) {
+  const requests = new Map<string, PendingRequest<DescriptionMatchInput>>();
+  for (const item of items) {
     if (item.sku !== null) continue;
-    const fornecedor = fornecedorDaNota.get(item.chave);
-    if (fornecedor === undefined) continue;
-    if (codigos.has(`${fornecedor}\u0000${item.codigo_fornecedor}`)) continue;
-    const candidates = sortCandidates(descricoes.get(fornecedor) ?? []);
+    const supplier = supplierByInvoice.get(item.chave);
+    if (supplier === undefined) continue;
+    if (codes.has(`${supplier}\u0000${item.codigo_fornecedor}`)) continue;
+    const candidates = sortCandidates(descriptions.get(supplier) ?? []);
     if (candidates.length === 0) continue;
     const key = descriptionMatchKey(item.descricao, candidates);
-    if (!pedidos.has(key)) pedidos.set(key, { key, input: { description: item.descricao, candidates } });
+    if (!requests.has(key)) requests.set(key, { key, input: { description: item.descricao, candidates } });
   }
-  return [...pedidos.values()];
+  return [...requests.values()];
 }
 
 /** #66 Os textos da nota e do cadastro são dados: escapados antes de entrar no prompt. */
@@ -94,30 +84,48 @@ export const OUTPUT_SCHEMA = {
 } as const;
 
 export function buildPrompt(input: DescriptionMatchInput): string {
-  const candidatos = input.candidates.map((c) => `- ${escapeData(c)}`).join('\n');
+  const candidateLines = input.candidates.map((c) => `- ${escapeData(c)}`).join('\n');
   return [
     `<descricao>${escapeData(input.description)}</descricao>`,
-    `<candidatos>\n${candidatos}\n</candidatos>`,
+    `<candidatos>\n${candidateLines}\n</candidatos>`,
   ].join('\n');
 }
 
-/** #66 Só vale um dos candidatos, exatamente; qualquer outra coisa vira null. */
+/**
+ * #66 Só vale um dos candidatos, exatamente. O modelo lê os candidatos escapados no prompt e pode
+ * devolver a forma escapada ("A &amp; B"); ela volta ao candidato cru. Qualquer outra coisa vira null.
+ */
 function validate(answer: unknown, candidates: readonly string[]): DescriptionMatchOutput {
-  if (typeof answer !== 'object' || answer === null) return { match: null };
-  const match = (answer as { match?: unknown }).match;
-  return { match: typeof match === 'string' && candidates.includes(match) ? match : null };
+  if (!isRecord(answer) || typeof answer.match !== 'string') return { match: null };
+  const { match } = answer;
+  if (candidates.includes(match)) return { match };
+  const shown = new Map(candidates.map((c) => [escapeData(c), c]));
+  return { match: shown.get(match) ?? null };
 }
 
 export const descriptionMatch: ClaudeTask<DescriptionMatchInput, DescriptionMatchOutput> = {
   name: 'description-match',
   async pending(db: Db) {
-    const [notas, itens, produtos] = await Promise.all([
-      db.select('kit_notas', { select: 'chave,fornecedor_id' }),
-      db.select('kit_nota_itens', { select: 'chave,codigo_fornecedor,sku,descricao', filters: { sku: 'is.null' } }),
-      db.select('kit_produtos', { select: 'sku,descricao,fornecedor_id,codigo_fornecedor' }),
+    const [rawInvoices, rawItems, rawProducts] = await Promise.all([
+      db.select('kit_notas', { select: 'chave,fornecedor_id', order: 'chave.asc' }),
+      db.select('kit_nota_itens', {
+        select: 'chave,codigo_fornecedor,sku,descricao',
+        filters: { sku: 'is.null' },
+        order: 'chave.asc,codigo_fornecedor.asc',
+      }),
+      db.select('kit_produtos', { select: 'sku,descricao,fornecedor_id,codigo_fornecedor', order: 'sku.asc' }),
     ]);
-    // #66 As colunas vêm do select acima, no formato de supabase/migrations/20261115120000_base_do_kit.sql.
-    return buildRequests(notas as KitNota[], itens as KitNotaItem[], produtos as KitProduto[]);
+    /**
+     * #66 As colunas vêm do select acima, no formato de supabase/migrations/20261115120000_base_do_kit.sql;
+     * a linha que não passa no guard é descartada e contada, e nunca derruba a tarefa (#66).
+     */
+    const invoices = partitionRows(rawInvoices, isKitNota);
+    const items = partitionRows(rawItems, isKitNotaItem);
+    const products = partitionRows(rawProducts, isKitProduto);
+    return {
+      requests: buildRequests(invoices.valid, items.valid, products.valid),
+      dropped: invoices.dropped + items.dropped + products.dropped,
+    };
   },
   async run(input: DescriptionMatchInput, ask: Ask) {
     const answer = await ask<unknown>({ system: SYSTEM_PROMPT, prompt: buildPrompt(input), schema: OUTPUT_SCHEMA });

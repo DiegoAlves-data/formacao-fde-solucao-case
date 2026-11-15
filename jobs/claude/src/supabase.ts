@@ -1,6 +1,9 @@
-// Cliente mínimo do PostgREST do Supabase para o executor do Claude, com fetch puro (#66).
-// Segue o estilo de api/src/connectors/supabase-rest.ts, sem importar de api/: os dois pacotes
-// são independentes. O erro diz a operação, a tabela e o status; nunca a chave nem o corpo (#66).
+/**
+ * Cliente mínimo do PostgREST do Supabase para o executor do Claude, com fetch puro (#66).
+ * Segue o estilo de api/src/connectors/supabase-rest.ts, sem importar de api/: os dois pacotes
+ * são independentes. O erro diz a operação, a tabela e o status; nunca a chave nem o corpo (#66).
+ * As linhas lidas saem como unknown: quem lê estreita cada uma por guard (#66).
+ */
 
 export type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -11,7 +14,8 @@ export type Filters = Readonly<Record<string, string>>;
 
 export type SelectOptions = {
   readonly select?: string;
-  readonly order?: string;
+  /** #66 Obrigatória: sem ordem explícita o Postgres não garante a mesma sequência entre as páginas. */
+  readonly order: string;
   readonly filters?: Filters;
 };
 
@@ -24,7 +28,7 @@ export type UpsertOptions = {
 
 /** #66 O que as tarefas e o laço precisam do banco; os testes passam um falso. */
 export interface Db {
-  select(table: string, options?: SelectOptions): Promise<Row[]>;
+  select(table: string, options: SelectOptions): Promise<unknown[]>;
   upsert(table: string, rows: readonly Row[], options: UpsertOptions): Promise<unknown[]>;
 }
 
@@ -74,16 +78,15 @@ export class SupabaseClient implements Db {
   }
 
   /** #66 Lê todas as linhas que passam nos filtros, página a página pelo Range. */
-  async select(table: string, options: SelectOptions = {}): Promise<Row[]> {
-    const params = new URLSearchParams({ select: options.select ?? '*', ...options.filters });
-    if (options.order) params.set('order', options.order);
-    const rows: Row[] = [];
+  async select(table: string, options: SelectOptions): Promise<unknown[]> {
+    const params = new URLSearchParams({ select: options.select ?? '*', ...options.filters, order: options.order });
+    const rows: unknown[] = [];
     for (let start = 0; ; start += this.pageSize) {
       const page = await this.request('select', table, 'GET', params, undefined, {
         'Range-Unit': 'items',
         Range: `${start}-${start + this.pageSize - 1}`,
       });
-      rows.push(...(page as Row[]));
+      rows.push(...page);
       if (page.length < this.pageSize) return rows;
     }
   }

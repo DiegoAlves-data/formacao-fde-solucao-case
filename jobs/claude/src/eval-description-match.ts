@@ -1,22 +1,15 @@
-// Eval do casamento de descrição (#66, AC-6). Monta o conjunto só a partir do kit (data/kit/notas.json
-// e data/kit/produtos.json), nunca de data/kit/excecoes.json nem de outro gabarito, e pergunta ao
-// Claude pelo mesmo run da tarefa description-match, sem gravar nada no banco. Precisa só do
-// CLAUDE_CODE_OAUTH_TOKEN. Roda pelo workflow claude-enrich com eval = true.
+/**
+ * Eval do casamento de descrição (#66, AC-6). Monta o conjunto só a partir do kit (data/kit/notas.json
+ * e data/kit/produtos.json), nunca de data/kit/excecoes.json nem de outro gabarito, e pergunta ao
+ * Claude pelo mesmo run da tarefa description-match, sem gravar nada no banco. Precisa só do
+ * CLAUDE_CODE_OAUTH_TOKEN. Roda pelo workflow claude-enrich com eval = true (#66).
+ */
 import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { askClaude, type Ask } from './claude.ts';
-import {
-  descriptionMatch,
-  sortCandidates,
-  type DescriptionMatchInput,
-  type KitProduto,
-} from './tasks/description-match.ts';
-
-export type KitNotaComItens = {
-  readonly chave: string;
-  readonly fornecedor_id: string;
-  readonly itens: readonly { codigo_fornecedor: string; sku: string | null; descricao: string }[];
-};
+import { partitionRows } from './guards.ts';
+import { isKitNotaWithItems, isKitProduto, type KitNotaWithItems, type KitProduto } from './kit-rows.ts';
+import { descriptionMatch, sortCandidates, type DescriptionMatchInput } from './tasks/description-match.ts';
 
 export type EvalCase = { readonly variant: string; readonly input: DescriptionMatchInput; readonly expected: string | null };
 export type EvalResult = { readonly variant: string; readonly expected: string | null; readonly answer: string | null; readonly failed: boolean };
@@ -89,36 +82,36 @@ function doubledSize(description: string): string | undefined {
  * do produto entre os candidatos do fornecedor. Negativos: os itens sem sku e cada produto com o
  * tamanho dobrado, esperando null.
  */
-export function buildEvalDataset(notas: readonly KitNotaComItens[], produtos: readonly KitProduto[]): EvalCase[] {
-  const porSku = new Map(produtos.map((p) => [p.sku, p]));
-  const candidatosDo = new Map<string, string[]>();
-  for (const p of produtos) candidatosDo.set(p.fornecedor_id, [...(candidatosDo.get(p.fornecedor_id) ?? []), p.descricao]);
-  const candidates = (fornecedor: string) => sortCandidates(candidatosDo.get(fornecedor) ?? []);
+export function buildEvalDataset(invoices: readonly KitNotaWithItems[], products: readonly KitProduto[]): EvalCase[] {
+  const bySku = new Map(products.map((p) => [p.sku, p]));
+  const candidatesBySupplier = new Map<string, string[]>();
+  for (const p of products) candidatesBySupplier.set(p.fornecedor_id, [...(candidatesBySupplier.get(p.fornecedor_id) ?? []), p.descricao]);
+  const candidates = (supplier: string) => sortCandidates(candidatesBySupplier.get(supplier) ?? []);
 
-  const positivos: EvalCase[] = [];
-  const vistos = new Set<string>();
-  const negativos: EvalCase[] = [];
-  for (const nota of notas) {
-    const lista = candidates(nota.fornecedor_id);
-    if (lista.length === 0) continue;
-    for (const item of nota.itens) {
+  const positives: EvalCase[] = [];
+  const seen = new Set<string>();
+  const negatives: EvalCase[] = [];
+  for (const invoice of invoices) {
+    const list = candidates(invoice.fornecedor_id);
+    if (list.length === 0) continue;
+    for (const item of invoice.itens) {
       if (item.sku === null) {
-        negativos.push({ variant: 'sem-cadastro', input: { description: item.descricao, candidates: lista }, expected: null });
+        negatives.push({ variant: 'sem-cadastro', input: { description: item.descricao, candidates: list }, expected: null });
         continue;
       }
-      const produto = porSku.get(item.sku);
-      if (!produto || vistos.has(`${item.sku}\u0000${item.descricao}`)) continue;
-      vistos.add(`${item.sku}\u0000${item.descricao}`);
+      const product = bySku.get(item.sku);
+      if (!product || seen.has(`${item.sku}\u0000${item.descricao}`)) continue;
+      seen.add(`${item.sku}\u0000${item.descricao}`);
       for (const v of variants(item.descricao)) {
-        positivos.push({ variant: v.variant, input: { description: v.description, candidates: lista }, expected: produto.descricao });
+        positives.push({ variant: v.variant, input: { description: v.description, candidates: list }, expected: product.descricao });
       }
     }
   }
-  for (const p of produtos) {
-    const dobrada = doubledSize(p.descricao);
-    if (dobrada) negativos.push({ variant: 'medida-dobrada', input: { description: dobrada, candidates: candidates(p.fornecedor_id) }, expected: null });
+  for (const p of products) {
+    const doubled = doubledSize(p.descricao);
+    if (doubled) negatives.push({ variant: 'medida-dobrada', input: { description: doubled, candidates: candidates(p.fornecedor_id) }, expected: null });
   }
-  return [...positivos, ...negativos];
+  return [...positives, ...negatives];
 }
 
 export type EvalSummary = {
@@ -185,25 +178,42 @@ export async function runEval(cases: readonly EvalCase[], ask: Ask, concurrency 
 
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
-async function readKit<T>(name: string): Promise<T> {
-  return JSON.parse(await readFile(new URL(`../../../data/kit/${name}`, import.meta.url), 'utf8')) as T;
+async function readKit(name: string): Promise<unknown> {
+  return JSON.parse(await readFile(new URL(`../../../data/kit/${name}`, import.meta.url), 'utf8'));
+}
+
+function asList(value: unknown, file: string): unknown[] {
+  if (!Array.isArray(value)) throw new Error(`data/kit/${file} não é uma lista`);
+  return value;
+}
+
+export type NarrowedKit = {
+  readonly notas: KitNotaWithItems[]; // ADR-001
+  readonly produtos: KitProduto[]; // ADR-001
+  readonly dropped: number;
+};
+
+/** #66 Estreita o JSON do kit por guard: a linha fora do formato é descartada e contada. */
+export function narrowKit(rawInvoices: unknown, rawProducts: unknown): NarrowedKit {
+  const invoices = partitionRows(asList(rawInvoices, 'notas.json'), isKitNotaWithItems);
+  const products = partitionRows(asList(rawProducts, 'produtos.json'), isKitProduto);
+  return { notas: invoices.valid, produtos: products.valid, dropped: invoices.dropped + products.dropped };
 }
 
 async function main(): Promise<void> {
-  const notas = await readKit<KitNotaComItens[]>('notas.json');
-  const produtos = await readKit<KitProduto[]>('produtos.json');
-  const cases = buildEvalDataset(notas, produtos);
+  const kit = narrowKit(await readKit('notas.json'), await readKit('produtos.json'));
+  const cases = buildEvalDataset(kit.notas, kit.produtos);
   const results = await runEval(cases, askClaude);
   const s = summarize(results);
   console.log('Eval do casamento de descrição (#66, AC-6)');
-  console.log(`casos: ${s.total} (positivos ${s.positives}, negativos ${s.negatives})`);
+  console.log(`casos: ${s.total} (positivos ${s.positives}, negativos ${s.negatives}); linhas do kit descartadas: ${kit.dropped}`);
   console.log(`acurácia ${pct(s.accuracy)}, precisão ${pct(s.precision)}, revocação ${pct(s.recall)}`);
   console.log(`falsos positivos nos negativos: ${s.falsePositivesOnNegatives}; falhas do Claude: ${s.claudeFailures}`);
   for (const [variant, v] of Object.entries(s.byVariant)) console.log(`  ${variant}: ${v.correct}/${v.total} (${pct(v.accuracy)})`);
-  const erros = results
+  const failures = results
     .map((r, i) => ({ ...r, description: cases[i]!.input.description }))
     .filter((r) => r.answer !== r.expected);
-  console.log(JSON.stringify({ summary: s, errors: erros }, null, 2));
+  console.log(JSON.stringify({ summary: s, errors: failures }, null, 2));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

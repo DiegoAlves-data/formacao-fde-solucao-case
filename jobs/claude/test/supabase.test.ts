@@ -1,4 +1,4 @@
-// Testes do cliente mínimo do PostgREST do executor do Claude (#66).
+/** Testes do cliente mínimo do PostgREST do executor do Claude (#66). */
 import { describe, expect, it } from 'vitest';
 import { SupabaseClient, SupabaseError, type FetchFn } from '../src/supabase.ts';
 
@@ -46,7 +46,9 @@ describe('SupabaseClient (#66)', () => {
   it('select pagina pelo Range até a página vir incompleta', async () => {
     const { fetch, calls } = fakeFetch([json([{ n: 1 }, { n: 2 }]), json([{ n: 3 }])]);
     const db = new SupabaseClient({ url: URL_BASE, secretKey: KEY, fetch, pageSize: 2 });
-    const rows = await db.select('kit_produtos');
+    const rows = await db.select('kit_produtos', { order: 'sku.asc' });
+    expect(new URL(calls[0]!.url).searchParams.get('order')).toBe('sku.asc');
+    expect(new URL(calls[1]!.url).searchParams.get('order')).toBe('sku.asc');
     expect(rows).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }]);
     expect((calls[0]!.init?.headers as Record<string, string>).Range).toBe('0-1');
     expect((calls[1]!.init?.headers as Record<string, string>).Range).toBe('2-3');
@@ -68,7 +70,7 @@ describe('SupabaseClient (#66)', () => {
     const corpo = `falhou com ${KEY} e dados sensíveis`;
     const { fetch } = fakeFetch([new Response(corpo, { status: 401 })]);
     const db = new SupabaseClient({ url: URL_BASE, secretKey: KEY, fetch });
-    const error = await db.select('kit_notas').catch((e: unknown) => e);
+    const error = await db.select('kit_notas', { order: 'chave.asc' }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(SupabaseError);
     const message = (error as Error).message;
     expect(message).toContain('401');
@@ -82,7 +84,7 @@ describe('SupabaseClient (#66)', () => {
       throw new Error(`conexão recusada ${KEY}`);
     };
     const db = new SupabaseClient({ url: URL_BASE, secretKey: KEY, fetch });
-    const error = await db.select('kit_notas').catch((e: unknown) => e);
+    const error = await db.select('kit_notas', { order: 'chave.asc' }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(SupabaseError);
     expect((error as Error).message).not.toContain(KEY);
   });
@@ -90,7 +92,7 @@ describe('SupabaseClient (#66)', () => {
   it('a chave legada (JWT) vai também no Authorization', async () => {
     const { fetch, calls } = fakeFetch([json([])]);
     const db = new SupabaseClient({ url: URL_BASE, secretKey: 'eyJ.legada', fetch });
-    await db.select('kit_notas');
+    await db.select('kit_notas', { order: 'chave.asc' });
     expect((calls[0]!.init?.headers as Record<string, string>).Authorization).toBe('Bearer eyJ.legada');
   });
 });

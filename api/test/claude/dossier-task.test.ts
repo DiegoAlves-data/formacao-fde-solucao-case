@@ -262,3 +262,25 @@ describe('#38 do evento à gaveta', () => {
     expect(JSON.stringify(fake.tables.get('proposals') ?? [])).toBe(before);
   });
 });
+
+describe('#130 a linha do evento diz de onde veio e por que falhou', () => {
+  it('a linha ok do evento leva trigger event, sem motivo, e a duração', async () => {
+    const { round, fake } = await setup();
+    await round(answering(kitGoodRaw()));
+    expect(sugestoes(fake)[0]).toMatchObject({ status: 'ok', trigger: 'event', reason: null, latency_ms: expect.any(Number) });
+  });
+
+  it('o erro de formato vira invalid_shape, o prazo vira timeout e o resto claude_failed', async () => {
+    const cases: [unknown, string][] = [
+      [new ClaudeError('format', 'fora do formato'), 'invalid_shape'],
+      [new ClaudeError('timeout', 'sem resposta'), 'timeout'],
+      [new ClaudeError('api', 'HTTP 500'), 'claude_failed'],
+      [new Error('caiu'), 'claude_failed'],
+    ];
+    for (const [error, reason] of cases) {
+      const { round, fake } = await setup();
+      await round(vi.fn(async () => { throw error; }) as unknown as Ask);
+      expect(sugestoes(fake)[0]).toMatchObject({ status: 'error', trigger: 'event', reason });
+    }
+  });
+});

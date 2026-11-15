@@ -73,6 +73,16 @@ export function parseDossierOutput(raw: unknown): DossierOutput | null {
   return { summary: r.summary, divergences, supplier_history: r.supplier_history };
 }
 
+/** #130 O motivo do erro na língua da gaveta: formato, prazo ou o resto (`claude_failed`). */
+export type DossierFailureReason = 'claude_failed' | 'invalid_shape' | 'timeout';
+
+/** #130 Do erro da chamada ao motivo gravado em claude_suggestions.reason. */
+export function failureReason(error: unknown): DossierFailureReason {
+  if (error instanceof ClaudeError && error.kind === 'format') return 'invalid_shape';
+  if (error instanceof ClaudeError && error.kind === 'timeout') return 'timeout';
+  return 'claude_failed';
+}
+
 /** #38 A tarefa sobre fontes injetadas; `dossierTask` liga ao Supabase. */
 export function dossierTaskWith(deps: DossierTaskDeps): ClaudeTask<DossierInput, DossierOutput> {
   return {
@@ -111,6 +121,12 @@ export function dossierTaskWith(deps: DossierTaskDeps): ClaudeTask<DossierInput,
       // #38 ClaudeError leva a mensagem para a linha de erro; 'format' não é global, então só esta chave erra.
       if (!output) throw new ClaudeError('format', 'dossier: resposta do Claude fora do formato');
       return output;
+    },
+
+    /** #130 A linha do evento diz que veio do evento, quanto a chamada levou e, no erro, o motivo. */
+    rowFields(outcome) {
+      const reason = 'error' in outcome ? failureReason(outcome.error) : null;
+      return { trigger: 'event', reason, latency_ms: outcome.latencyMs };
     },
   };
 }

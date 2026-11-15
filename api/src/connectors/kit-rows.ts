@@ -1,6 +1,6 @@
 // Linhas das tabelas kit_* (base do kit, ADR-001) e a conversão para os tipos do domínio (#59).
 import { Money, Quantity, type Unit } from '../domain/index.js';
-import { isBoolean, isInteger, isString, nullable, oneOf, parseRows, shaped, type Guard, type Shape } from './guards.js';
+import { isBoolean, isInteger, isIsoDate, isString, nullable, oneOf, parseRows, shaped, type Guard, type Shape } from './guards.js';
 import type { SelectOptions, SupabaseRest } from './supabase-rest.js';
 
 /** #59 numeric chega do PostgREST como número ou texto, conforme a configuração. */
@@ -190,7 +190,7 @@ const notaLancadaShape = {
 export const isKitNotaLancadaRow = shaped<KitNotaLancada>(notaLancadaShape);
 
 const pagamentoShape = {
-  pagamento_id: isString, fornecedor_id: isString, destino: isString, data: isString, valor: isNumeric, // ADR-001
+  pagamento_id: isString, fornecedor_id: isString, destino: isString, data: isIsoDate, valor: isNumeric, // ADR-001
   forma: isString, origem: isString, nota_chave: nullableString, // ADR-001
 } satisfies Shape<KitPagamento>;
 export const isKitPagamentoRow = shaped<KitPagamento>(pagamentoShape);

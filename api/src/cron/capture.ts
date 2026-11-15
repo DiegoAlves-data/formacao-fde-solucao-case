@@ -1,6 +1,6 @@
 // Captura do Cron: lê a SEFAZ, grava as notas novas e confere as que estão a conferir (#59, AC-5).
 import type { CheckContext, Invoice } from '../domain/index.js';
-import type { InvoiceStore } from '../connectors/invoice-store.js';
+import type { CheckFailure, InvoiceStore } from '../connectors/invoice-store.js';
 import type {
   BankPort,
   PayablesPort,
@@ -38,13 +38,31 @@ export async function captureInvoices(deps: CaptureDeps): Promise<CaptureResult>
   const toCheck = issued.filter((i) => pending.has(i.accessKey));
   if (toCheck.length > 0) {
     const ctx = await buildContext(deps, issued);
-    for (const invoice of toCheck) {
+    const { checked, failures } = checkEach(toCheck, ctx);
+    await deps.invoices.saveChecked(checked, (deps.now ?? (() => new Date()))().toISOString());
+    await deps.invoices.markCheckFailed(failures);
+    return { seen: issued.length, inserted: inserted.length, checked: checked.length };
+  }
+  return { seen: issued.length, inserted: inserted.length, checked: 0 };
+}
+
+/** #56 Confere nota a nota: a que quebra fica de fora, com o motivo, e não derruba as outras. */
+function checkEach(
+  invoices: readonly Invoice[],
+  ctx: CheckContext,
+): { checked: Invoice[]; failures: CheckFailure[] } {
+  const checked: Invoice[] = [];
+  const failures: CheckFailure[] = [];
+  for (const invoice of invoices) {
+    try {
       // #59 Regra 1: a nota não é duplicada de si mesma; a E6 compara com as outras capturadas.
       invoice.check({ ...ctx, capturedInvoices: ctx.capturedInvoices.filter((o) => o.accessKey !== invoice.accessKey) });
+      checked.push(invoice);
+    } catch (error) {
+      failures.push({ accessKey: invoice.accessKey, reason: error instanceof Error ? error.message : String(error) });
     }
-    await deps.invoices.saveChecked(toCheck, (deps.now ?? (() => new Date()))().toISOString());
   }
-  return { seen: issued.length, inserted: inserted.length, checked: toCheck.length };
+  return { checked, failures };
 }
 
 async function buildContext(deps: CaptureDeps, captured: readonly Invoice[]): Promise<CheckContext> {

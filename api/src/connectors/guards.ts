@@ -9,6 +9,9 @@ export type Shape<T> = { readonly [K in keyof T]-?: Guard<T[K]> };
 export const isString: Guard<string> = (v): v is string => typeof v === 'string';
 export const isNumber: Guard<number> = (v): v is number => typeof v === 'number' && Number.isFinite(v);
 export const isInteger: Guard<number> = (v): v is number => Number.isSafeInteger(v);
+/** #56 Data de calendário `YYYY-MM-DD` que existe (2026-11-31 não passa). */
+export const isIsoDate: Guard<string> = (v): v is string =>
+  typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && new Date(`${v}T00:00:00Z`).toISOString().startsWith(v);
 export const isBoolean: Guard<boolean> = (v): v is boolean => typeof v === 'boolean';
 export const isUnknown: Guard<unknown> = (_v): _v is unknown => true;
 

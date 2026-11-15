@@ -14,7 +14,7 @@ const suggestion = (overrides: Record<string, unknown> = {}) => ({
   status: 'ok',
   model: 'claude-opus-5-5',
   error: null,
-  generated_at: GERADO,
+  updated_at: GERADO,
   ...overrides,
 });
 
@@ -45,7 +45,7 @@ describe('SupabaseDossierSource', () => {
   });
 
   it('#38/AC-4 status erro chega como erro, sem o model', async () => {
-    const { source } = setup([suggestion({ status: 'erro', output: null, model: null, error: 'timeout' })]);
+    const { source } = setup([suggestion({ status: 'error', output: null, model: null, error: 'timeout' })]);
     expect(await source.find(KEY)).toEqual({ status: 'erro', output: null, model: null, generatedAt: GERADO });
   });
 

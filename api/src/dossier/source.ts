@@ -21,18 +21,20 @@ export interface DossierSource {
   find(invoiceAccessKey: string): Promise<DossierSuggestion | null>;
 }
 
+// #38 A tabela grava `ok` ou `error` (claude_suggestions_status_check) e não tem `generated_at`: a hora do dossiê
+// é `updated_at`, a última escrita da linha pelo laço (#66).
 type SuggestionRow = {
-  status: 'ok' | 'erro';
+  status: 'ok' | 'error';
   output: unknown;
   model: string | null;
-  generated_at: string;
+  updated_at: string;
 };
 
 const isRow = shaped<SuggestionRow>({
-  status: oneOf('ok', 'erro'),
+  status: oneOf('ok', 'error'),
   output: isUnknown,
   model: nullable(isString),
-  generated_at: isString,
+  updated_at: isString,
 } satisfies Shape<SuggestionRow>);
 
 // #68: só letras, dígitos e hífen chegam ao filtro do PostgREST: a chave de acesso é numérica.
@@ -47,13 +49,13 @@ export class SupabaseDossierSource implements DossierSource {
       throw new SupabaseRestError('select', TABLE, 0, 'chave de acesso fora do formato');
     }
     const rows = await this.rest.select(TABLE, {
-      select: 'status,output,model,generated_at',
+      select: 'status,output,model,updated_at',
       filters: { task: `eq.${DOSSIER_TASK}`, input_key: `eq.${invoiceAccessKey}` },
     });
     const [first] = rows;
     if (first === undefined) return null;
     const row = parseOne(first, isRow, TABLE);
-    return { status: row.status, output: row.output, model: row.model, generatedAt: row.generated_at };
+    return { status: row.status === 'ok' ? 'ok' : 'erro', output: row.output, model: row.model, generatedAt: row.updated_at };
   }
 }
 

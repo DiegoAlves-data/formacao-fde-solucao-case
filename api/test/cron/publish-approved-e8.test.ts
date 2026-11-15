@@ -2,10 +2,10 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { MemoryApprovalStore, type CaseFile } from '../../src/approval/store.js';
 import type { Published, RegistryCorrectionMessage, RegistryCorrectionOutbox, RegistryPort } from '../../src/connectors/ports.js';
-import { publishApprovedSemCadastro } from '../../src/cron/publish-approved-e8.js';
+import { lastDaysUtc, publishApprovedUnregistered } from '../../src/cron/publish-approved-e8.js';
 import { propose } from '../../src/domain/approval.js';
 import { ApprovalPolicy, type ApprovalRoute } from '../../src/domain/approval-policy.js';
-import { amountAtRiskSemCadastro } from '../../src/domain/checks/e8-item-sem-cadastro.js';
+import { amountAtRiskOfUnregistered } from '../../src/domain/checks/e8-item-sem-cadastro.js';
 import type { Approval } from '../../src/domain/approval.js';
 import { DockAction, Money, Proposal, Title, type Invoice } from '../../src/domain/index.js';
 import { kitDomain, kitInvoice, withItems, type KitDomain } from '../support/kit-domain.js';
@@ -64,7 +64,7 @@ function caseFile(invoice: Invoice, state: 'aprovada' | 'alterada' | 'aguardando
     classification: invoice.classification,
     dockAction: DockAction.receive(),
     level: route.level,
-    amountAtRisk: amountAtRiskSemCadastro(invoice, kit.ctx),
+    amountAtRisk: amountAtRiskOfUnregistered(invoice, kit.ctx),
     justification: 'teste',
   });
   proposal.awaitApproval();
@@ -89,7 +89,7 @@ describe('#35 Cron: E8 aprovado vai à caixa de saída do Cadastro', () => {
     const outbox = new IdempotentOutbox();
     const store = new MemoryApprovalStore([caseFile(checked('NF-009'), 'aprovada')]);
 
-    const result = await publishApprovedSemCadastro({ store, registry, outbox, days: [DIA] });
+    const result = await publishApprovedUnregistered({ store, outbox, days: [DIA] });
 
     expect(result).toEqual({ published: 1 });
     expect(outbox.published).toHaveLength(1);
@@ -100,14 +100,14 @@ describe('#35 Cron: E8 aprovado vai à caixa de saída do Cadastro', () => {
     const outbox = new IdempotentOutbox();
     const store = new MemoryApprovalStore([caseFile(checked('NF-009'), 'alterada')]);
 
-    expect(await publishApprovedSemCadastro({ store, registry, outbox, days: [DIA] })).toEqual({ published: 1 });
+    expect(await publishApprovedUnregistered({ store, outbox, days: [DIA] })).toEqual({ published: 1 });
   });
 
   it('AC-5: proposta aguardando aprovação não publica nada', async () => {
     const outbox = new IdempotentOutbox();
     const store = new MemoryApprovalStore([caseFile(checked('NF-009'), 'aguardando_aprovacao')]);
 
-    expect(await publishApprovedSemCadastro({ store, registry, outbox, days: [DIA] })).toEqual({ published: 0 });
+    expect(await publishApprovedUnregistered({ store, outbox, days: [DIA] })).toEqual({ published: 0 });
     expect(outbox.published).toHaveLength(0);
   });
 
@@ -115,7 +115,7 @@ describe('#35 Cron: E8 aprovado vai à caixa de saída do Cadastro', () => {
     const outbox = new IdempotentOutbox();
     const store = new MemoryApprovalStore([caseFile(checked('NF-001'), 'regra')]);
 
-    expect(await publishApprovedSemCadastro({ store, registry, outbox, days: [DIA] })).toEqual({ published: 0 });
+    expect(await publishApprovedUnregistered({ store, outbox, days: [DIA] })).toEqual({ published: 0 });
     expect(outbox.published).toHaveLength(0);
   });
 
@@ -123,16 +123,36 @@ describe('#35 Cron: E8 aprovado vai à caixa de saída do Cadastro', () => {
     const outbox = new IdempotentOutbox();
     const store = new MemoryApprovalStore([caseFile(checked('NF-009'), 'aprovada')]);
 
-    expect(await publishApprovedSemCadastro({ store, registry, outbox, days: ['2026-11-01'] })).toEqual({ published: 0 });
+    expect(await publishApprovedUnregistered({ store, outbox, days: ['2026-11-01'] })).toEqual({ published: 0 });
   });
 
   it('AC-5: rodar duas vezes no mesmo dia deixa uma só mensagem', async () => {
     const outbox = new IdempotentOutbox();
     const store = new MemoryApprovalStore([caseFile(checked('NF-009'), 'aprovada')]);
 
-    await publishApprovedSemCadastro({ store, registry, outbox, days: [DIA] });
-    await publishApprovedSemCadastro({ store, registry, outbox, days: [DIA] });
+    await publishApprovedUnregistered({ store, outbox, days: [DIA] });
+    await publishApprovedUnregistered({ store, outbox, days: [DIA] });
 
     expect(outbox.published).toHaveLength(1);
+  });
+
+  it('AC-5: a janela são os últimos 7 dias em UTC, de hoje para trás (#66)', () => {
+    expect(lastDaysUtc(new Date('2026-11-15T01:30:00Z'), 7)).toEqual([
+      '2026-11-15',
+      '2026-11-14',
+      '2026-11-13',
+      '2026-11-12',
+      '2026-11-11',
+      '2026-11-10',
+      '2026-11-09',
+    ]);
+  });
+
+  it('AC-5: uma decisão de seis dias atrás, dentro da janela, ainda chega ao Cadastro (#66)', async () => {
+    const outbox = new IdempotentOutbox();
+    const store = new MemoryApprovalStore([caseFile(checked('NF-009'), 'aprovada')]);
+    const days = lastDaysUtc(new Date('2026-11-21T10:00:00Z'), 7);
+
+    expect(await publishApprovedUnregistered({ store, outbox, days })).toEqual({ published: 1 });
   });
 });

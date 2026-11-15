@@ -2,8 +2,10 @@ import { AmountAtRisk } from '../amount-at-risk.js';
 import type { CheckContext, Product } from '../context.js';
 import { matchByDescription, type DescriptionMatchRequest } from '../description-match.js';
 import { Divergence } from '../divergence.js';
+import type { Evidence } from '../evidence.js';
 import type { InvoiceItem, InvoiceView } from '../invoice.js';
 import { Money } from '../money.js';
+import { orderOf } from '../reconciliation.js';
 import type { Check } from './check.js';
 
 function supplierProducts(invoice: InvoiceView, ctx: CheckContext): readonly Product[] {
@@ -33,7 +35,7 @@ export function descriptionMatchRequests(invoice: InvoiceView, ctx: CheckContext
  * #35, AC-1 e AC-2: os itens da nota que não estão no cadastro do fornecedor: nem pelo SKU, nem pelo código do
  * fornecedor, nem (quando o SKU vem vazio) pela descrição.
  */
-export function itemsSemCadastro(invoice: InvoiceView, ctx: CheckContext): readonly InvoiceItem[] {
+export function unregisteredItems(invoice: InvoiceView, ctx: CheckContext): readonly InvoiceItem[] {
   const products = supplierProducts(invoice, ctx);
   const candidates = products.map((p) => p.description);
   return invoice.items.filter((item) => {
@@ -43,8 +45,8 @@ export function itemsSemCadastro(invoice: InvoiceView, ctx: CheckContext): reado
 }
 
 /** Regra 6 e #35, AC-3: o valor em risco do E8 é a soma dos itens sem cadastro. */
-export function amountAtRiskSemCadastro(invoice: InvoiceView, ctx: CheckContext): AmountAtRisk {
-  const sum = itemsSemCadastro(invoice, ctx).reduce((acc, item) => acc.add(item.total), Money.zero());
+export function amountAtRiskOfUnregistered(invoice: InvoiceView, ctx: CheckContext): AmountAtRisk {
+  const sum = unregisteredItems(invoice, ctx).reduce((acc, item) => acc.add(item.total), Money.zero());
   return AmountAtRisk.of(sum, invoice.total);
 }
 
@@ -55,8 +57,14 @@ export function amountAtRiskSemCadastro(invoice: InvoiceView, ctx: CheckContext)
  *
  * Preencha aqui; não mude o nome nem a assinatura.
  */
-export const checkItemSemCadastro: Check = (invoice, ctx) =>
-  itemsSemCadastro(invoice, ctx).map((item) =>
+export const checkItemSemCadastro: Check = (invoice, ctx) => {
+  // #66 A ordem travada que a nota cita entra como segunda evidência de cada E8 (a tela mostra "Ordem: travada").
+  const order = orderOf(invoice, ctx.purchaseOrders);
+  const lockedOrder: Evidence[] =
+    order !== null && order.status === 'travada'
+      ? [{ source: 'erp_compras', reference: order.id, description: `Ordem ${order.id} travada: ${order.statusReason}` }]
+      : [];
+  return unregisteredItems(invoice, ctx).map((item) =>
     Divergence.of({
       classification: 'E8',
       skus: item.sku ? [item.sku] : [],
@@ -69,6 +77,8 @@ export const checkItemSemCadastro: Check = (invoice, ctx) =>
             `${item.sku ? `SKU ${item.sku}` : 'SKU vazio'}, valor ${item.total.toString()}) não está no ` +
             `cadastro do fornecedor ${invoice.supplierId}: não casa por SKU, por código do fornecedor nem por descrição.`,
         },
+        ...lockedOrder,
       ],
     }),
   );
+};

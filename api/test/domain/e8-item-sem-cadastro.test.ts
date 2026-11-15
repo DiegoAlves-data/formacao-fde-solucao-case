@@ -1,9 +1,9 @@
 // História #35, plano #66: o item sem cadastro é barrado e mandado ao Cadastro (E8).
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
-  amountAtRiskSemCadastro,
+  amountAtRiskOfUnregistered,
   checkItemSemCadastro,
-  itemsSemCadastro,
+  unregisteredItems,
 } from '../../src/domain/checks/e8-item-sem-cadastro.js';
 import { routeDivergences } from '../../src/domain/approval-policy.js';
 import { Money, withDescriptionMatches, type DescriptionSuggester, type InvoiceItem } from '../../src/domain/index.js';
@@ -122,11 +122,11 @@ describe('#35 E8: item sem cadastro', () => {
     const items = await withDescriptionMatches(
       suggesting(() => null),
       [{ description: 'Isotônico limão 500 ml (lançamento)', candidates }],
-      () => itemsSemCadastro(nf009, kit.ctx),
+      () => unregisteredItems(nf009, kit.ctx),
     );
     expect(items.map((i) => i.supplierCode)).toEqual(['F02-N27']);
 
-    const atRisk = amountAtRiskSemCadastro(nf009, kit.ctx);
+    const atRisk = amountAtRiskOfUnregistered(nf009, kit.ctx);
     expect(atRisk.amount.cents).toBe(35400);
     expect(atRisk.invoiceTotal.equals(nf009.total)).toBe(true);
   });
@@ -141,11 +141,11 @@ describe('#35 E8: item sem cadastro', () => {
     );
 
     expect(checkItemSemCadastro(nf, kit.ctx)).toHaveLength(2);
-    expect(amountAtRiskSemCadastro(nf, kit.ctx).amount.cents).toBe(35400 + outro.total.cents);
+    expect(amountAtRiskOfUnregistered(nf, kit.ctx).amount.cents).toBe(35400 + outro.total.cents);
   });
 
   it('AC-3: sem item sem cadastro, o valor em risco é zero', () => {
-    expect(amountAtRiskSemCadastro(kitInvoice(kit, 'NF-001'), kit.ctx).amount.isZero()).toBe(true);
+    expect(amountAtRiskOfUnregistered(kitInvoice(kit, 'NF-001'), kit.ctx).amount.isZero()).toBe(true);
   });
 
   it('AC-4: o E8 da NF-009 (R$ 354,00) vai para a coordenação, linha 3 da régua', () => {
@@ -162,5 +162,46 @@ describe('#35 E8: item sem cadastro', () => {
     const route = routeDivergences([{ classification: 'E8' }], Money.fromReais(150000));
 
     expect(route.level).toBe('diretoria');
+  });
+
+  it('E8 com a ordem travada: a divergência ganha a evidência do ERP Compras com o motivo (#66, wireframe)', () => {
+    const nf009 = kitInvoice(kit, 'NF-009');
+    const ordem = {
+      id: 'OC-2026-43025',
+      supplierId: 'F02',
+      store: nf009.store,
+      issuedOn: nf009.issuedOn,
+      status: 'travada' as const,
+      statusReason: 'Item sem cadastro: aguarda master data',
+      items: [],
+      total: nf009.total,
+    };
+
+    const [e8] = checkItemSemCadastro(nf009, { ...kit.ctx, purchaseOrders: [ordem] });
+
+    expect(e8?.evidence).toHaveLength(2);
+    expect(e8?.evidence[0]?.source).toBe('erp_cadastro');
+    expect(e8?.evidence[1]).toEqual({
+      source: 'erp_compras',
+      reference: 'OC-2026-43025',
+      description: 'Ordem OC-2026-43025 travada: Item sem cadastro: aguarda master data',
+    });
+  });
+
+  it('E8 com a ordem que não está travada, ou sem ordem no contexto: só a evidência do Cadastro (#66)', () => {
+    const nf009 = kitInvoice(kit, 'NF-009');
+    const aberta = {
+      id: 'OC-2026-43025',
+      supplierId: 'F02',
+      store: nf009.store,
+      issuedOn: nf009.issuedOn,
+      status: 'aberta' as const,
+      statusReason: '',
+      items: [],
+      total: nf009.total,
+    };
+
+    expect(checkItemSemCadastro(nf009, { ...kit.ctx, purchaseOrders: [aberta] })[0]?.evidence).toHaveLength(1);
+    expect(checkItemSemCadastro(nf009, kit.ctx)[0]?.evidence).toHaveLength(1);
   });
 });

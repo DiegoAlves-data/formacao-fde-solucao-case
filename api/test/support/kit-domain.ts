@@ -39,15 +39,15 @@ export async function kitDomain(): Promise<KitDomain> {
   };
 }
 
-const notas = JSON.parse(
+const kitNotes = JSON.parse(
   readFileSync(new URL('../../../data/kit/notas.json', import.meta.url), 'utf8'),
 ) as { nota_id: string; chave: string }[];
 
 /** #66 A nota do kit pelo id dela (NF-009), como o domínio a recebe. */
-export function kitInvoice(kit: KitDomain, notaId: string): Invoice {
-  const chave = notas.find((n) => n.nota_id === notaId)?.chave;
-  const invoice = kit.invoices.find((i) => i.accessKey === chave);
-  if (!invoice) throw new Error(`kit: nota ${notaId} não encontrada`);
+export function kitInvoice(kit: KitDomain, invoiceId: string): Invoice {
+  const accessKey = kitNotes.find((n) => n.nota_id === invoiceId)?.chave;
+  const invoice = kit.invoices.find((i) => i.accessKey === accessKey);
+  if (!invoice) throw new Error(`kit: nota ${invoiceId} não encontrada`);
   return invoice;
 }
 

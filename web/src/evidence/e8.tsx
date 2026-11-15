@@ -32,7 +32,7 @@ function parseItem(evidence: EvidenceDto): ItemSemCadastro {
 }
 
 /** #66: os campos de um item. O que a evidência não traz mostra a frase dela, nada é inventado. */
-function fieldsOf(evidence: EvidenceDto, skus: string[]): ComparisonField[] {
+function fieldsOf(evidence: EvidenceDto, skus: string[], order: EvidenceDto | undefined): ComparisonField[] {
   const item = parseItem(evidence);
   const sentence = evidence.description ?? "";
   const sku = skus[0];
@@ -56,10 +56,26 @@ function fieldsOf(evidence: EvidenceDto, skus: string[]): ComparisonField[] {
     failed("busca-sku", "Busca por SKU"),
     failed("busca-codigo", "Busca por código do fornecedor"),
     failed("busca-descricao", "Busca por descrição"),
+    ...(order ? [orderField(order)] : []),
     ...(item.value
       ? [{ key: "risco", label: "Valor em risco", a: null, b: item.value, state: "divergent" } as ComparisonField]
       : []),
   ];
+}
+
+const REASON = /^Ordem .+ travada: (.+)$/;
+
+/** #66: a ordem travada, como no wireframe ("Ordem: travada"), com o motivo quando a frase o traz. */
+function orderField(order: EvidenceDto): ComparisonField {
+  const text = typeof order.description === "string" ? order.description : "";
+  return {
+    key: "ordem",
+    label: "Ordem",
+    a: "travada",
+    b: String(order.reference ?? ""),
+    state: "divergent",
+    note: REASON.exec(text)?.[1] ?? text,
+  };
 }
 
 /**
@@ -71,6 +87,7 @@ function ItemSemCadastroEvidence({ divergence }: EvidenceProps) {
   const evidence = Array.isArray(divergence.evidence) ? divergence.evidence : [];
   const record = evidence.find((e) => e?.source === "erp_cadastro");
   if (!record) return <GenericEvidence divergence={divergence} />;
+  const order = evidence.find((e) => e?.source === "erp_compras");
   const skus = Array.isArray(divergence.skus) ? divergence.skus : [];
 
   return (
@@ -82,15 +99,15 @@ function ItemSemCadastroEvidence({ divergence }: EvidenceProps) {
     >
       <ReconciliationDiff
         columns={["Nota fiscal", "Cadastro do ERP"]}
-        fields={fieldsOf(record, skus)}
+        fields={fieldsOf(record, skus, order)}
         showSummary
         variant="grid"
         ariaLabel="Item sem cadastro"
       />
       <Alert
         variant="info"
-        title="Vai para a coordenação"
-        description="Aprovar manda o item ao Cadastro, para ser cadastrado antes de a nota seguir."
+        title="Para onde a aprovação vai"
+        description="A régua encaminha a E8 à coordenação, ou acima quando a nota passa de R$ 100 mil. Aprovar manda o item ao Cadastro, para ser cadastrado antes de a nota seguir."
       />
     </Panel>
   );

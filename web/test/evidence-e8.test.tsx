@@ -70,8 +70,36 @@ describe("#66 evidência do item sem cadastro (E8)", () => {
 
   it("AC-4 e AC-5: diz que vai à coordenação e que aprovar manda o item ao Cadastro", () => {
     render(<EvidenceView divergence={NF009} />);
-    expect(screen.getByText(/coordenação/)).toBeTruthy();
+    expect(screen.getByText(/coordenação, ou acima quando a nota passa de R\$ 100 mil/)).toBeTruthy();
     expect(screen.getByText(/ao Cadastro/)).toBeTruthy();
+    expect(screen.queryByText("Vai para a coordenação")).toBeNull();
+  });
+
+  it("com a evidência da ordem, mostra a linha Ordem com o id, travada e o motivo", () => {
+    const comOrdem: DivergenceDto = {
+      ...NF009,
+      evidence: [
+        ...NF009.evidence,
+        {
+          source: "erp_compras",
+          reference: "OC-2026-42301",
+          description: "Ordem OC-2026-42301 travada: item sem cadastro de produto",
+        },
+      ],
+    };
+    render(<EvidenceView divergence={comOrdem} />);
+    const table = screen.getByRole("table", { name: "Item sem cadastro" });
+    expect(within(table).getByText("Ordem")).toBeTruthy();
+    expect(within(table).getByText("OC-2026-42301")).toBeTruthy();
+    expect(within(table).getByText("travada")).toBeTruthy();
+    expect(within(table).getByText(/item sem cadastro de produto/)).toBeTruthy();
+  });
+
+  it("sem a evidência da ordem, não mostra a linha Ordem", () => {
+    render(<EvidenceView divergence={NF009} />);
+    const table = screen.getByRole("table", { name: "Item sem cadastro" });
+    expect(within(table).queryByText("Ordem")).toBeNull();
+    expect(within(table).queryByText("travada")).toBeNull();
   });
 
   it("com SKU, mostra o SKU e o valor com milhar", () => {

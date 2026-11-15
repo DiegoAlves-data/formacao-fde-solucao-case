@@ -11,7 +11,7 @@ import { generateOnEvent } from '../../src/dossier/event.js';
 import { readDossier } from '../../src/dossier/read-dossier.js';
 import { SupabaseDossierSource } from '../../src/dossier/source.js';
 import { busyKeys } from '../../src/dossier/event.js';
-import { SupabaseDossierRequests } from '../../src/dossier/requests.js';
+import { SupabaseDossierRequests, type DossierRequests } from '../../src/dossier/requests.js';
 import { FakePostgrest } from '../support/fake-postgrest.js';
 import { KIT_ACCESS_KEY, kitCase, kitGoodRaw } from './kit-case.js';
 
@@ -111,8 +111,8 @@ describe('#38 do evento à gaveta, sem rodada agendada', () => {
   });
 
   it('sem credencial (sem `ask`) não grava linha e não lança: a próxima rodada tenta de novo (auth é global)', async () => {
-    const { fake, db, context, invoice } = await setup();
-    await expect(generateOnEvent({ db, askWithUsage: undefined, context }, invoice)).resolves.toBeUndefined();
+    const { fake, db, context, invoice, requests } = await setup();
+    await expect(generateOnEvent({ db, askWithUsage: undefined, context, requests }, invoice)).resolves.toBeUndefined();
     expect(sugestoes(fake)).toHaveLength(0);
   });
 
@@ -172,9 +172,9 @@ describe('#38 do evento à gaveta, sem rodada agendada', () => {
   });
 
   it('nota com pedido da gaveta em andamento (busy) não é chamada pelo evento', async () => {
-    const { invoice, db, context } = await setup();
+    const { invoice, db, context, requests } = await setup();
     const ask = answering(kitGoodRaw());
-    await generateOnEvent({ db, askWithUsage: ask, context, busy: new Set([KIT_ACCESS_KEY]) }, invoice);
+    await generateOnEvent({ db, askWithUsage: ask, context, requests, busy: new Set([KIT_ACCESS_KEY]) }, invoice);
     expect(ask).not.toHaveBeenCalled();
   });
 
@@ -191,7 +191,17 @@ describe('#38 do evento à gaveta, sem rodada agendada', () => {
       select: vi.fn(async () => []),
       upsert: vi.fn(async () => { throw new Error('banco fora do ar'); }),
     };
-    await expect(generateOnEvent({ db, askWithUsage: answering(kitGoodRaw()), context: async () => ctx }, invoice)).resolves.toBeUndefined();
+    const requests = {
+      open: vi.fn(async () => 1),
+      finish: vi.fn(async () => {}),
+      since: vi.fn(async () => []),
+      openSince: vi.fn(async () => []),
+    } satisfies DossierRequests;
+    await expect(
+      generateOnEvent({ db, askWithUsage: answering(kitGoodRaw()), context: async () => ctx, requests }, invoice),
+    ).resolves.toBeUndefined();
+    // O pedido aberto fecha mesmo com a escrita final falhando.
+    expect(requests.finish).toHaveBeenCalledWith(1, expect.any(Date));
   });
 });
 
@@ -271,5 +281,38 @@ describe('#130 o fim fecha só o próprio pedido', () => {
     expect(rows).toHaveLength(2);
     expect(rows.find((r) => r.id === drawerId)?.finished_at).toBeNull();
     expect(rows.find((r) => r.id !== drawerId)?.finished_at).not.toBeNull();
+  });
+});
+
+describe('#38 #130 duas propostas no mesmo disparo: cada linha com o próprio uso e o próprio pedido', () => {
+  it('cada claude_suggestions guarda o uso da sua resposta, e o evento abre e fecha um pedido por nota', async () => {
+    const { invoice, db, context, requests, fake } = await setup();
+    // Outra nota, com o resto da NF-004 como está (o protótipo leva itens e divergências).
+    const otherKey = `${KIT_ACCESS_KEY.slice(0, -1)}9`;
+    const other = Object.assign(Object.create(invoice) as typeof invoice, { accessKey: otherKey });
+    const usageOf: Record<string, Usage> = {
+      [KIT_ACCESS_KEY]: { input_tokens: 1200, output_tokens: 340 },
+      [otherKey]: { input_tokens: 800, output_tokens: 95 },
+    };
+    const opened: unknown[] = [];
+    for (const nota of [invoice, other]) {
+      const ask = vi.fn(async () => {
+        opened.push(...(fake.tables.get('dossier_requests') ?? []).filter((r) => r.input_key === nota.accessKey).map((r) => ({ ...r })));
+        return { value: kitGoodRaw(), usage: usageOf[nota.accessKey] };
+      }) as unknown as AskWithUsage;
+      await generateOnEvent({ db, askWithUsage: ask, context, requests }, nota);
+    }
+    const rows = sugestoes(fake);
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.input_key === KIT_ACCESS_KEY)).toMatchObject({ status: 'ok', trigger: 'event', usage: usageOf[KIT_ACCESS_KEY] });
+    expect(rows.find((r) => r.input_key === otherKey)).toMatchObject({ status: 'ok', trigger: 'event', usage: usageOf[otherKey] });
+    // Durante cada chamada, o pedido do evento da própria nota estava aberto.
+    expect(opened).toEqual([
+      expect.objectContaining({ input_key: KIT_ACCESS_KEY, requested_by: 'claude', trigger: 'event', finished_at: null }),
+      expect.objectContaining({ input_key: otherKey, requested_by: 'claude', trigger: 'event', finished_at: null }),
+    ]);
+    const reqs = fake.tables.get('dossier_requests') ?? [];
+    expect(reqs).toHaveLength(2);
+    expect(reqs.every((r) => r.finished_at !== null)).toBe(true);
   });
 });

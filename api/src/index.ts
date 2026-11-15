@@ -10,7 +10,7 @@ import { loadDossierContext } from "./dossier/context";
 import { SupabaseDossierSource } from "./dossier/source";
 import { SupabaseDossierRequests } from "./dossier/requests";
 import { credentialsFromEnv } from "./claude/client";
-import { onDemandAsk } from "./dossier/on-demand";
+import { onDemandAskWithUsage } from "./dossier/on-demand";
 import { restDb } from "./claude/db";
 import { SupabaseTimelineSource } from "./automation/readers";
 import { appStoreActionOutbox } from "./connectors/store-action";
@@ -62,13 +62,14 @@ function approvalDeps(env: Env) {
   };
 }
 
-/** #130 O banco e o Claude da geração sob demanda; sem credencial, sem `ask`, e a geração fecha em erro. */
+/** #130 O banco e o Claude da geração sob demanda; sem credencial, sem Claude, e a geração fecha em erro. */
 function onDemandClaude(env: Env, rest: SupabaseRest) {
   const credentials = credentialsFromEnv(env);
   const secret = credentials ? (credentials.kind === "api-key" ? credentials.apiKey : credentials.token) : "";
   return {
     db: restDb(rest),
-    ...(credentials ? { ask: onDemandAsk(credentials) } : {}),
+    // #38 Com o uso de tokens; sem credencial, undefined explícito (o tipo exige a ligação).
+    askWithUsage: credentials ? onDemandAskWithUsage(credentials) : undefined,
     secrets: [secret, env.BARTE_ACADEMY_SUPABASE_SECRET_KEY ?? ""],
   };
 }

@@ -15,9 +15,12 @@ const ENV: Env = { BARTE_ACADEMY_SUPABASE_URL: 'https://fake.supabase.co', BARTE
 const WITH_CLAUDE: Env = { ...ENV, BARTE_ACADEMY_CLAUDE_CODE_OAUTH_TOKEN: 'fake-oauth-token' };
 
 /** #171 Resposta mínima e válida da Messages API: a tool `responder` com uma saída que passa no schema. */
-function claudeAnswer() {
+function claudeAnswer(usage?: { input_tokens: number; output_tokens: number }) {
   return new Response(
-    JSON.stringify({ content: [{ type: 'tool_use', name: 'responder', input: { summary: 'ok', divergences: [], supplier_history: 'ok' } }] }),
+    JSON.stringify({
+      content: [{ type: 'tool_use', name: 'responder', input: { summary: 'ok', divergences: [], supplier_history: 'ok' } }],
+      ...(usage ? { usage } : {}),
+    }),
     { status: 200, headers: { 'content-type': 'application/json' } },
   );
 }
@@ -61,6 +64,24 @@ describe('#38 AC-1: o tick dispara o dossiê das propostas que acabou de encamin
     const rows = dossierRows(fake);
     expect(rows.length).toBe(DOSSIER_EVENT_LIMIT);
     expect(rows.every((r) => r.trigger === 'event' && r.status === 'ok')).toBe(true);
+  });
+
+  it('#38 a linha do dossiê gravada pelo tick leva o uso de tokens da resposta da Messages API', async () => {
+    const fake = new FakePostgrest(kitTables());
+    vi.stubGlobal('fetch', (input: string | URL, init?: RequestInit) =>
+      String(input).startsWith('https://api.anthropic.com/')
+        ? claudeAnswer({ input_tokens: 1500, output_tokens: 420 })
+        : fake.fetch(String(input), init),
+    );
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await runTick(WITH_CLAUDE, fake);
+
+    const rows = dossierRows(fake);
+    expect(rows.length).toBe(DOSSIER_EVENT_LIMIT);
+    for (const row of rows) {
+      expect(row).toMatchObject({ trigger: 'event', status: 'ok', usage: { input_tokens: 1500, output_tokens: 420 } });
+    }
   });
 
   it('AC-5: sem a credencial do Claude, a rodada não grava nenhum dossiê, e a proposta segue sem ele', async () => {

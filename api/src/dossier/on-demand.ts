@@ -1,7 +1,7 @@
 // #130 O dossiê pedido na gaveta: o mesmo agente da #38, disparado pela pessoa para uma proposta só.
 // #130 Roda depois do 202, pelo waitUntil do Worker. Nunca lança: qualquer falha vira linha de erro (ou mantém o
 // dossiê pronto anterior, AC-4) e o pedido sempre fecha em dossier_requests.
-import { DEFAULT_MODEL, ClaudeError, type Ask } from '../claude/client.js';
+import { ClaudeClient, ClaudeError, DEFAULT_MODEL, type Ask, type ClaudeCredentials, type FetchFn } from '../claude/client.js';
 import type { Db } from '../claude/db.js';
 import { storedError } from '../claude/runner.js';
 import { dossierRequest, failureReason, parseDossierOutput, type DossierInput } from '../claude/tasks/dossier.js';
@@ -10,6 +10,22 @@ import type { DossierRequests } from './requests.js';
 import { DOSSIER_TASK } from './source.js';
 
 const TABLE = 'claude_suggestions';
+
+/**
+ * #130 Prazo da pergunta sob demanda. O Worker mantém o waitUntil vivo só uns 30 s depois da resposta; com os
+ * 45 s do Cron (ASK_TIMEOUT_MS) o Worker cortaria o trabalho antes, o `finally` não rodaria e o pedido ficaria
+ * aberto (Gerando e 409 por 5 min). Com 20 s sobra margem para ler o contexto antes e gravar a linha depois, e a
+ * resposta atrasada vira erro `timeout` gravado, com o pedido fechado.
+ */
+export const ON_DEMAND_ASK_TIMEOUT_MS = 20_000;
+
+/** #130 O Ask da geração sob demanda, com o prazo que cabe no waitUntil. */
+export function onDemandAsk(
+  credentials: ClaudeCredentials,
+  options: { readonly fetch?: FetchFn; readonly timeoutMs?: number } = {},
+): Ask {
+  return new ClaudeClient({ credentials, fetch: options.fetch, timeoutMs: options.timeoutMs ?? ON_DEMAND_ASK_TIMEOUT_MS }).ask;
+}
 
 /** #130 O que a geração sob demanda precisa; tudo injetável nos testes. */
 export type OnDemandDeps = {

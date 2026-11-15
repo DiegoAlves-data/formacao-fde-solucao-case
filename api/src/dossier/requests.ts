@@ -24,6 +24,8 @@ export type DossierRequest = {
 export interface DossierRequests {
   /** #130 Os pedidos da nota feitos desde `since`, do mais novo ao mais velho. */
   since(invoiceAccessKey: string, since: Date): Promise<DossierRequest[]>;
+  /** #130 #38 AC-6 Os pedidos ainda abertos de todas as notas, feitos desde `since`: uma leitura só, para o Cron. */
+  openSince(since: Date): Promise<DossierRequest[]>;
   /** #130 Registra o pedido aceito. */
   open(request: Omit<DossierRequest, 'finished_at'>): Promise<void>;
   /** #130 Fecha os pedidos ainda abertos da nota, com sucesso ou não. */
@@ -50,6 +52,15 @@ export class SupabaseDossierRequests implements DossierRequests {
     const rows = await this.rest.select(TABLE, {
       select: 'input_key,requested_by,requested_at,finished_at',
       filters: { input_key: `eq.${invoiceAccessKey}`, requested_at: `gte.${since.toISOString()}` },
+      order: 'requested_at.desc',
+    });
+    return parseRows(rows, isRequest, TABLE);
+  }
+
+  async openSince(since: Date): Promise<DossierRequest[]> {
+    const rows = await this.rest.select(TABLE, {
+      select: 'input_key,requested_by,requested_at,finished_at',
+      filters: { finished_at: 'is.null', requested_at: `gte.${since.toISOString()}` },
       order: 'requested_at.desc',
     });
     return parseRows(rows, isRequest, TABLE);

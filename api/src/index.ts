@@ -9,7 +9,8 @@ import { supabaseConnectors } from "./connectors/supabase-connectors";
 import { loadDossierContext } from "./dossier/context";
 import { SupabaseDossierSource } from "./dossier/source";
 import { SupabaseDossierRequests } from "./dossier/requests";
-import { ClaudeClient, credentialsFromEnv } from "./claude/client";
+import { credentialsFromEnv } from "./claude/client";
+import { onDemandAsk } from "./dossier/on-demand";
 import { restDb } from "./claude/db";
 import { SupabaseTimelineSource } from "./automation/readers";
 import { appStoreActionOutbox } from "./connectors/store-action";
@@ -66,7 +67,7 @@ function onDemandClaude(env: Env, rest: SupabaseRest) {
   const secret = credentials ? (credentials.kind === "api-key" ? credentials.apiKey : credentials.token) : "";
   return {
     db: restDb(rest),
-    ...(credentials ? { ask: new ClaudeClient({ credentials }).ask } : {}),
+    ...(credentials ? { ask: onDemandAsk(credentials) } : {}),
     secrets: [secret, env.BARTE_ACADEMY_SUPABASE_SECRET_KEY ?? ""],
   };
 }

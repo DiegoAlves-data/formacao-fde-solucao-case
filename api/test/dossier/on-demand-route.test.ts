@@ -4,13 +4,14 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { MemoryApprovalStore, type CaseFile } from '../../src/approval/store.js';
-import { ClaudeError, type Ask } from '../../src/claude/client.js';
+import { ASK_TIMEOUT_MS, ClaudeError, type Ask, type FetchFn } from '../../src/claude/client.js';
 import { restDb } from '../../src/claude/db.js';
 import { needsDossier } from '../../src/claude/tasks/dossier.js';
 import { SupabaseRest } from '../../src/connectors/supabase-rest.js';
 import { draftProposal, propose } from '../../src/domain/approval.js';
 import { ApprovalPolicy } from '../../src/domain/approval-policy.js';
 import { Title, type Invoice } from '../../src/domain/index.js';
+import { ON_DEMAND_ASK_TIMEOUT_MS, onDemandAsk } from '../../src/dossier/on-demand.js';
 import { SupabaseDossierRequests } from '../../src/dossier/requests.js';
 import { SupabaseDossierSource } from '../../src/dossier/source.js';
 import type { Env } from '../../src/env.js';
@@ -207,11 +208,33 @@ describe('#130 POST /api/propostas/:chave/dossie', () => {
     expect(suggestions(fake)[0]).toMatchObject({ status: 'ok', trigger: 'on_demand', output: fresh });
   });
 
-  it('#130 a falha sem dossiê anterior grava o erro com o motivo', async () => {
-    const { ask, settle, fake } = await setup({ ask: answering({ summary: 'x' }) });
+  it('#130 a falha sem dossiê anterior grava o erro com o motivo, e a gaveta mostra invalid_shape', async () => {
+    const { ask, settle, fake, drawer } = await setup({ ask: answering({ summary: 'x' }) });
     expect((await ask()).status).toBe(202);
     await settle();
     expect(suggestions(fake)[0]).toMatchObject({ status: 'error', reason: 'invalid_shape', trigger: 'on_demand', attempts: 1 });
+    expect(await drawer()).toMatchObject({ status: 'unavailable', reason: 'invalid_shape', notice: expect.stringContaining('fora do formato') });
+  });
+
+  it('#130 o prazo sob demanda cabe na janela do waitUntil (uns 30 s) e é menor que o do Cron', () => {
+    expect(ON_DEMAND_ASK_TIMEOUT_MS).toBeLessThanOrEqual(20_000);
+    expect(ON_DEMAND_ASK_TIMEOUT_MS).toBeLessThan(ASK_TIMEOUT_MS);
+  });
+
+  it('#130 a resposta atrasada vira erro timeout gravado, o pedido fecha e a gaveta mostra timeout', async () => {
+    // A API que nunca responde: o fetch só termina quando o prazo do cliente aborta o pedido.
+    const hanging: FetchFn = (_input, init) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      });
+    const late = onDemandAsk({ kind: 'api-key', apiKey: 'sk-segredo' }, { fetch: hanging, timeoutMs: 20 });
+    const { ask, settle, fake, drawer } = await setup({ ask: late });
+    expect((await ask()).status).toBe(202);
+    await settle();
+    expect(suggestions(fake)[0]).toMatchObject({ status: 'error', reason: 'timeout', trigger: 'on_demand' });
+    expect(String(suggestions(fake)[0]?.error)).not.toContain('sk-segredo');
+    expect(requests(fake)[0]?.finished_at).toBe(NOW.toISOString());
+    expect(await drawer()).toMatchObject({ status: 'unavailable', reason: 'timeout', notice: expect.stringContaining('demorou demais') });
   });
 
   it('#130 sem credencial do Claude, 202, a linha de erro claude_failed e a gaveta mostra indisponível', async () => {

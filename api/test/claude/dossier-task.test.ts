@@ -20,6 +20,7 @@ import { SupabaseRest } from '../../src/connectors/supabase-rest.js';
 import { readDossier } from '../../src/dossier/read-dossier.js';
 import { buildDossierPrompt } from '../../src/dossier/prompt.js';
 import { SupabaseDossierSource } from '../../src/dossier/source.js';
+import { SupabaseDossierRequests } from '../../src/dossier/requests.js';
 import { buildFactCatalog, Divergence, DOSSIER_OUTPUT_SCHEMA } from '../../src/domain/index.js';
 import { FakePostgrest } from '../support/fake-postgrest.js';
 import { KIT_ACCESS_KEY, kitCase, kitGoodRaw } from '../dossier/kit-case.js';
@@ -282,5 +283,42 @@ describe('#130 a linha do evento diz de onde veio e por que falhou', () => {
       await round(vi.fn(async () => { throw error; }) as unknown as Ask);
       expect(sugestoes(fake)[0]).toMatchObject({ status: 'error', trigger: 'event', reason });
     }
+  });
+});
+
+describe('#38 AC-6 o Cron não refaz o dossiê que a pessoa pediu na gaveta', () => {
+  const NOW = new Date('2026-11-15T13:00:00.000Z');
+  async function withRequests(requests: Record<string, unknown>[]) {
+    const { invoice, ctx, tables } = await kitCase();
+    const fake = new FakePostgrest({ ...tables, claude_suggestions: [], dossier_requests: requests });
+    const rest = new SupabaseRest({ url: 'https://fake.supabase.co', secretKey: 'sb_secret_fake', fetch: fake.fetch });
+    const loadContext = vi.fn(async () => ctx);
+    const task = dossierTaskWith({
+      listAwaiting: async () => [fileOf(invoice, 'aguardando_aprovacao', 'analista')],
+      loadContext,
+      requests: new SupabaseDossierRequests(rest),
+      now: () => NOW,
+    });
+    return { task, db: restDb(rest), loadContext };
+  }
+  const request = (requestedAt: string, finishedAt: string | null) => ({
+    input_key: KIT_ACCESS_KEY,
+    requested_by: 'analista@jachegou.test',
+    requested_at: requestedAt,
+    finished_at: finishedAt,
+  });
+
+  it('com um pedido aberto há menos de 5 min, a chave fica de fora e o contexto não é lido', async () => {
+    const { task, db, loadContext } = await withRequests([request('2026-11-15T12:58:00.000Z', null)]);
+    expect((await task.pending(db)).requests).toEqual([]);
+    expect(loadContext).not.toHaveBeenCalled();
+  });
+
+  it('o pedido já fechado ou abandonado não segura a chave', async () => {
+    const { task, db } = await withRequests([
+      request('2026-11-15T12:59:00.000Z', '2026-11-15T12:59:30.000Z'),
+      request('2026-11-15T12:40:00.000Z', null),
+    ]);
+    expect((await task.pending(db)).requests.map((r) => r.key)).toEqual([KIT_ACCESS_KEY]);
   });
 });

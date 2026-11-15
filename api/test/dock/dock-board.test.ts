@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DockActionMessage, Published } from '../../src/connectors/ports.js';
-import { AWAITING_INSTRUCTION, dockBoard, type DockInvoice } from '../../src/dock/dock-board.js';
+import { AWAITING_INSTRUCTION, dockBoard, type DockDecision, type DockInvoice } from '../../src/dock/dock-board.js';
 import { DockAction, Quantity } from '../../src/domain/index.js';
 import { kitNotes, kitNotesOf } from './kit-invoices.js';
 
@@ -121,5 +121,25 @@ describe('dockBoard: a doca de um destino num dia (#72)', () => {
     expect(board.rows[0]?.items).toEqual(
       note?.itens.map((i) => ({ sku: i.sku, description: i.descricao, quantity: { amount: i.quantidade, unit: i.unidade } })),
     );
+  });
+});
+
+describe('dockBoard: quem decidiu cada nota (#211)', () => {
+  it('traz decidedBy no vocabulário do timeline: a regra, a pessoa pelo e-mail e nulo sem decisão', () => {
+    const decisions = new Map<string, DockDecision>([
+      [first, { approver: 'regra', approverLevel: 'regra' }],
+      [second, { approver: 'ana@jachegou.test', approverLevel: 'analista' }],
+    ]);
+    const published = [publish(first, DockAction.receive()), publish(second, DockAction.refuse())];
+    const board = dockBoard({ invoices, published, decisions, destination: 'CD-03', date: DATE });
+    const by = (key: string) => board.rows.find((r) => r.invoiceAccessKey === key)?.decidedBy;
+    expect(by(first)).toEqual({ actor: 'rule', actor_name: 'Regra' });
+    expect(by(second)).toEqual({ actor: 'person', actor_name: 'ana@jachegou.test' });
+    expect(by(third)).toBeNull();
+  });
+
+  it('sem o mapa de decisões, toda linha leva decidedBy nulo', () => {
+    const board = dockBoard({ invoices, published: [], destination: 'CD-03', date: DATE });
+    expect(board.rows.every((r) => r.decidedBy === null)).toBe(true);
   });
 });

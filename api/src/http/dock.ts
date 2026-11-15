@@ -78,6 +78,11 @@ export function dockHandler(deps: DockDeps = {}, place: ReceivingPlace = "doca_c
     const loaded = await Promise.all([source.invoicesOn(date), place === "app_loja" ? source.publishedToStores() : source.published()]).catch(logFailure);
     if (!loaded) return Response.json({ error: "supabase_unavailable" }, { status: 502 });
     const [invoices, published] = loaded;
-    return Response.json(dockBoard({ invoices, published, destination: requested, date, place }));
+    // #211 Quem decidiu: um erro aqui não derruba a doca; as linhas vão sem decidedBy.
+    // Só as notas do destino que a tela mostra: o `in.(...)` cresce com cada chave.
+    const inPlace = invoices.filter((i) => i.issuedOn === date && receivingPlace(i.store) === place);
+    const shown = requested ?? [...new Set(inPlace.map((i) => i.store))].sort()[0];
+    const decisions = await source.decisions(inPlace.filter((i) => i.store === shown).map((i) => i.accessKey)).catch(logFailure);
+    return Response.json(dockBoard({ invoices, published, destination: requested, date, place, decisions: decisions ?? undefined }));
   };
 }

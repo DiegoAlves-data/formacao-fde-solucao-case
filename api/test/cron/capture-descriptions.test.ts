@@ -61,7 +61,7 @@ describe('#35 Cron com o Claude no casamento por descrição', () => {
 
     const result = await captureInvoices(deps(fake));
 
-    expect(result).toEqual({ seen: 80, inserted: 80, checked: 80 });
+    expect(result).toEqual({ seen: 80, inserted: 80, checked: 80, failed: 0 });
     expect(classificationOf(fake, chave)).toBe('E8');
   });
 });

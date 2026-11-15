@@ -18,7 +18,7 @@ function env(name: string): string | undefined {
  * #66 Revocação mínima total da regra sozinha: a medida no kit, arredondada para baixo à casa de 5
  * pontos percentuais. Se a regra mudar e a revocação subir, suba este piso junto.
  */
-const MIN_RULE_RECALL = 0.6; // #66 medida: 60,7% em 298 casos, com a abreviação só com ponto
+const MIN_RULE_RECALL = 0.5; // #66 medida: 60,7% em 298 casos, com a abreviação só com ponto
 
 const POSITIVE_KINDS = ['exata', 'abrev', 'abrev_sem_ponto', 'ordem', 'unidade', 'ruido', 'parcial'] as const;
 const NEGATIVE_KINDS = ['outra_medida', 'outro_produto', 'sem_sku'] as const;

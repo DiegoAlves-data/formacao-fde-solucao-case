@@ -1,11 +1,11 @@
-"""Testes online da base do kit no Supabase (AC-1, AC-2, AC-3).
+"""Testes online da base do kit no Supabase (AC-1, AC-2, AC-3 do #52).
 
 Pulam, sem falhar, quando BARTE_ACADEMY_SUPABASE_URL ou BARTE_ACADEMY_SUPABASE_SECRET_KEY não
-estão no ambiente. A carga (scripts/carregar_kit.py) deve ter rodado antes, como no fluxo do
+estão no ambiente. A carga (scripts/load_kit.py) deve ter rodado antes, como no fluxo do
 GitHub Actions. Para rodar local:
 
     set -a; . ./.dev.vars; set +a
-    python3 scripts/carregar_kit.py
+    python3 scripts/load_kit.py
     python3 -m unittest discover -s scripts -p 'kit_online_test.py' -v
 
 A chave pública vem de BARTE_ACADEMY_SUPABASE_PUBLISHABLE_KEY; se faltar, o teste a busca na API
@@ -17,93 +17,104 @@ import os
 import unittest
 import urllib.error
 import urllib.request
+from decimal import Decimal
+from typing import Any
 
-import carregar_kit as ck
+import load_kit as ck
 
-URL = os.environ.get(ck.VAR_URL)
-CHAVE = os.environ.get(ck.VAR_CHAVE)
-TEM_CREDENCIAL = bool(URL and CHAVE)
+# Any: o JSON do contrato e das respostas só tem forma conhecida em tempo de execução (#52).
+Json = Any
+
+URL = os.environ.get(ck.URL_VAR)
+KEY = os.environ.get(ck.KEY_VAR)
+HAS_CREDENTIALS = bool(URL and KEY)
 
 
-def chave_publica():
-    direta = os.environ.get("BARTE_ACADEMY_SUPABASE_PUBLISHABLE_KEY")
-    if direta:
-        return direta
+def publishable_key() -> str | None:
+    direct = os.environ.get("BARTE_ACADEMY_SUPABASE_PUBLISHABLE_KEY")
+    if direct:
+        return direct
     token = os.environ.get("BARTE_ACADEMY_SUPABASE_ACCESS_TOKEN")
-    projeto = os.environ.get("BARTE_ACADEMY_SUPABASE_PROJECT_ID")
-    if not (token and projeto):
+    project = os.environ.get("BARTE_ACADEMY_SUPABASE_PROJECT_ID")
+    if not (token and project):
         return None
-    req = urllib.request.Request(f"https://api.supabase.com/v1/projects/{projeto}/api-keys",
+    req = urllib.request.Request(f"https://api.supabase.com/v1/projects/{project}/api-keys",
                                  headers={"Authorization": "Bearer " + token})
     with urllib.request.urlopen(req, timeout=30) as r:
-        chaves = json.load(r)
-    for tipo in ("publishable", "legacy"):
-        for k in chaves:
-            if k.get("type") == tipo and (tipo == "publishable" or k.get("name") == "anon"):
-                return k["api_key"]
+        keys = json.load(r)
+    for kind in ("publishable", "legacy"):
+        for k in keys:
+            if k.get("type") == kind and (kind == "publishable" or k.get("name") == "anon"):
+                return str(k["api_key"])
     return None
 
 
-def ler_com_chave(chave, tabela):
+def read_with_key(key: str, table: str) -> tuple[int, list[Json]]:
     """Lê a tabela com a chave dada. Devolve (status, corpo); erro HTTP devolve corpo vazio."""
-    cab = {"apikey": chave}
-    if not chave.startswith("sb_"):
-        cab["Authorization"] = "Bearer " + chave
-    req = urllib.request.Request(ck.url_rest(URL) + tabela + "?select=*", headers=cab)
+    assert URL
+    headers = {"apikey": key}
+    if not key.startswith("sb_"):
+        headers["Authorization"] = "Bearer " + key
+    req = urllib.request.Request(ck.rest_url(URL) + table + "?select=*", headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
-            return r.status, json.load(r)
+            return int(r.status), list(json.load(r))
     except urllib.error.HTTPError as e:
         return e.code, []
 
 
-@unittest.skipUnless(TEM_CREDENCIAL, "sem BARTE_ACADEMY_SUPABASE_URL/_SECRET_KEY: teste online pulado")
-class BaseDoKitOnlineTest(unittest.TestCase):
+@unittest.skipUnless(HAS_CREDENTIALS, "sem BARTE_ACADEMY_SUPABASE_URL/_SECRET_KEY: teste online pulado")
+class KitBaseOnlineTest(unittest.TestCase):
+    contract: Json
+    rows: dict[str, list[dict[str, Json]]]
+    client: ck.Supabase
+
     @classmethod
-    def setUpClass(cls):
-        cls.contrato = ck.carregar_contrato()
-        cls.linhas = ck.montar_linhas()
-        cls.cliente = ck.Supabase(URL, CHAVE)
+    def setUpClass(cls) -> None:
+        assert URL and KEY
+        cls.contract = ck.load_contract()
+        cls.rows = ck.build_rows()
+        cls.client = ck.Supabase(URL, KEY)
 
-    def contagens(self):
-        return {t["nome"]: self.cliente.contar(t["nome"]) for t in self.contrato["tabelas"]}
+    def counts(self) -> dict[str, int]:
+        return {t["name"]: self.client.count(t["name"]) for t in self.contract["tables"]}
 
-    def test_ac1_contagem_de_cada_tabela_igual_a_do_json(self):
-        for t in self.contrato["tabelas"]:
-            with self.subTest(tabela=t["nome"]):
-                esperado = ck.contagem_esperada(t)
-                obtido = self.cliente.contar(t["nome"])
-                print(f"  AC-1 {t['nome']}: json={esperado} supabase={obtido}")
-                self.assertEqual(esperado, obtido)
+    def test_ac1_count_of_each_table_equals_the_json(self) -> None:
+        for t in self.contract["tables"]:
+            with self.subTest(table=t["name"]):
+                expected = ck.expected_count(t)
+                found = self.client.count(t["name"])
+                print(f"  AC-1 {t['name']}: json={expected} supabase={found}")
+                self.assertEqual(expected, found)
 
-    def test_ac1_somas_conferem_com_o_json_sem_tolerancia(self):
-        for t in self.contrato["tabelas"]:
-            for coluna in t["somas"]:
-                with self.subTest(tabela=t["nome"], coluna=coluna):
-                    json_soma = ck.somar(self.linhas[t["nome"]], coluna)
-                    banco = self.cliente.ler_coluna(t["nome"], coluna)
-                    banco_soma = sum((ck.Decimal(str(v)) for v in banco), ck.Decimal(0))
-                    print(f"  soma {t['nome']}.{coluna}: json={json_soma} supabase={banco_soma}")
-                    self.assertEqual(json_soma, banco_soma)
+    def test_ac1_sums_match_the_json_without_tolerance(self) -> None:
+        for t in self.contract["tables"]:
+            for column in t["sums"]:
+                with self.subTest(table=t["name"], column=column):
+                    json_sum = ck.sum_column(self.rows[t["name"]], column)
+                    stored = self.client.read_column(t["name"], column)
+                    db_sum = sum((Decimal(str(v)) for v in stored), Decimal(0))
+                    print(f"  soma {t['name']}.{column}: json={json_sum} supabase={db_sum}")
+                    self.assertEqual(json_sum, db_sum)
 
-    def test_ac2_carga_repetida_nao_muda_nenhuma_contagem(self):
-        antes = self.contagens()
-        ck.carregar(self.cliente)
-        depois = self.contagens()
-        print(f"  AC-2 antes={antes}\n  AC-2 depois={depois}")
-        self.assertEqual(antes, depois)
+    def test_ac2_repeated_load_changes_no_count(self) -> None:
+        before = self.counts()
+        ck.load(self.client)
+        after = self.counts()
+        print(f"  AC-2 antes={before}\n  AC-2 depois={after}")
+        self.assertEqual(before, after)
 
-    def test_ac3_chave_publica_nao_le_nenhuma_linha(self):
-        publica = chave_publica()
-        if not publica:
+    def test_ac3_publishable_key_reads_no_row(self) -> None:
+        public = publishable_key()
+        if not public:
             self.skipTest("sem chave pública nem token para buscá-la")
-        for t in self.contrato["tabelas"]:
-            with self.subTest(tabela=t["nome"]):
-                self.assertGreater(self.cliente.contar(t["nome"]), 0, "tabela vazia não prova RLS")
-                status, corpo = ler_com_chave(publica, t["nome"])
-                print(f"  AC-3 {t['nome']}: HTTP {status}, {len(corpo)} linhas")
+        for t in self.contract["tables"]:
+            with self.subTest(table=t["name"]):
+                self.assertGreater(self.client.count(t["name"]), 0, "tabela vazia não prova RLS")
+                status, body = read_with_key(public, t["name"])
+                print(f"  AC-3 {t['name']}: HTTP {status}, {len(body)} linhas")
                 self.assertIn(status, (200, 401, 403))
-                self.assertEqual([], corpo)
+                self.assertEqual([], body)
 
 
 if __name__ == "__main__":

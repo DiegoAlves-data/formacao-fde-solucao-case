@@ -3,10 +3,10 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import {
   amountAtRiskSemCadastro,
   checkItemSemCadastro,
-  E8_APPROVAL_LEVEL,
   itemsSemCadastro,
 } from '../../src/domain/checks/e8-item-sem-cadastro.js';
-import { withDescriptionMatches, type DescriptionSuggester, type InvoiceItem } from '../../src/domain/index.js';
+import { routeDivergences } from '../../src/domain/approval-policy.js';
+import { Money, withDescriptionMatches, type DescriptionSuggester, type InvoiceItem } from '../../src/domain/index.js';
 import { kitDomain, kitInvoice, withItems, type KitDomain } from '../support/kit-domain.js';
 
 let kit: KitDomain;
@@ -148,7 +148,19 @@ describe('#35 E8: item sem cadastro', () => {
     expect(amountAtRiskSemCadastro(kitInvoice(kit, 'NF-001'), kit.ctx).amount.isZero()).toBe(true);
   });
 
-  it('AC-4: o E8 vai para a coordenação', () => {
-    expect(E8_APPROVAL_LEVEL).toBe('coordenacao');
+  it('AC-4: o E8 da NF-009 (R$ 354,00) vai para a coordenação, linha 3 da régua', () => {
+    const nf009 = kitInvoice(kit, 'NF-009');
+    const divergences = checkItemSemCadastro(nf009, kit.ctx);
+
+    const route = routeDivergences(divergences, nf009.total);
+
+    expect(route.level).toBe('coordenacao');
+    expect(route.line).toBe(3);
+  });
+
+  it('AC-4: o E8 em nota acima de R$ 100 mil sobe para a diretoria; a regra 7 nunca baixa o nível', () => {
+    const route = routeDivergences([{ classification: 'E8' }], Money.fromReais(150000));
+
+    expect(route.level).toBe('diretoria');
   });
 });

@@ -1,11 +1,14 @@
 import { listDescriptionSuggestions, storedDescriptionSuggester } from "../connectors/claude-suggestions";
 import { supabaseConnectors } from "../connectors/supabase-connectors";
 import { SupabaseRest, SupabaseRestError } from "../connectors/supabase-rest";
+import type { RegistryCorrectionOutbox, RegistryPort } from "../connectors/ports";
 import type { DescriptionSuggester } from "../domain/description-match";
 import type { Env } from "../env";
 import { captureInvoices } from "./capture";
 import { findUnreconciledReceipts } from "./unreconciled-receipts";
 import { proposeChecked } from "../approval/propose-checked";
+import { SupabaseApprovalStore } from "../approval/supabase-store";
+import { publishApprovedSemCadastro } from "./publish-approved-e8";
 
 /** Execução agendada: captura e confere as notas (#59). Registra uma linha, sem dado sensível. */
 export async function tick(controller: Pick<ScheduledController, "cron">, env: Env): Promise<void> {
@@ -16,7 +19,7 @@ export async function tick(controller: Pick<ScheduledController, "cron">, env: E
     return;
   }
   const rest = new SupabaseRest({ url, secretKey });
-  const { captureDeps } = supabaseConnectors(rest);
+  const { captureDeps, registryCorrections } = supabaseConnectors(rest);
   const descriptions = await storedSuggestions(rest);
   const result = await captureInvoices(descriptions ? { ...captureDeps, descriptions } : captureDeps);
   const unreconciled = await findUnreconciledReceipts(captureDeps);
@@ -26,8 +29,9 @@ export async function tick(controller: Pick<ScheduledController, "cron">, env: E
     purchasing: captureDeps.purchasing,
     registry: captureDeps.registry,
   });
+  const cadastroE8 = await publishApproved(rest, captureDeps.registry, registryCorrections);
   console.log(
-    `cron: execução agendada (${controller.cron}); notas vistas ${result.seen}, novas ${result.inserted}, conferidas ${result.checked}, com erro ${result.failed}, propostas ${proposals.proposed}, aprovadas pela regra ${proposals.approvedByRule}; recebimentos sem nota [${unreconciled.noKey.join(", ")}], com chave sem nota [${unreconciled.keyWithoutInvoice.join(", ")}]`,
+    `cron: execução agendada (${controller.cron}); notas vistas ${result.seen}, novas ${result.inserted}, conferidas ${result.checked}, com erro ${result.failed}, propostas ${proposals.proposed}, aprovadas pela regra ${proposals.approvedByRule}, cadastro E8 ${cadastroE8}; recebimentos sem nota [${unreconciled.noKey.join(", ")}], com chave sem nota [${unreconciled.keyWithoutInvoice.join(", ")}]`,
   );
 }
 
@@ -42,5 +46,26 @@ async function storedSuggestions(rest: SupabaseRest): Promise<DescriptionSuggest
     const status = error instanceof SupabaseRestError ? `HTTP ${error.status}` : "falha na leitura";
     console.log(`cron: sugestões do Claude indisponíveis (${status}); a regra decide sozinha`);
     return undefined;
+  }
+}
+
+/**
+ * #35 (plano #66, AC-5) Manda ao Cadastro o E8 das propostas decididas hoje e ontem (UTC). Se falha, registra
+ * uma linha sem dado sensível e a rodada segue: a caixa de saída é idempotente e a próxima rodada repete.
+ */
+async function publishApproved(
+  rest: SupabaseRest,
+  registry: RegistryPort,
+  outbox: RegistryCorrectionOutbox,
+): Promise<number> {
+  try {
+    const now = Date.now();
+    const days = [new Date(now), new Date(now - 24 * 60 * 60 * 1000)].map((d) => d.toISOString().slice(0, 10));
+    const { published } = await publishApprovedSemCadastro({ store: new SupabaseApprovalStore(rest), registry, outbox, days });
+    return published;
+  } catch (error) {
+    const status = error instanceof SupabaseRestError ? `HTTP ${error.status}` : "falha na publicação";
+    console.log(`cron: cadastro E8 indisponível (${status}); a próxima rodada repete`);
+    return 0;
   }
 }

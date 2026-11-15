@@ -1,10 +1,7 @@
 // História #35, plano #66: a proposta aprovada com E8 publica o item ao Cadastro (AC-5).
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { Published, RegistryCorrectionMessage, RegistryCorrectionOutbox } from '../../src/connectors/ports.js';
-import {
-  amountAtRiskSemCadastro,
-  E8_APPROVAL_LEVEL,
-} from '../../src/domain/checks/e8-item-sem-cadastro.js';
+import { amountAtRiskSemCadastro } from '../../src/domain/checks/e8-item-sem-cadastro.js';
 import { DockAction, Proposal, type Invoice } from '../../src/domain/index.js';
 import { publishItemsSemCadastro } from '../../src/registry/publish-items-sem-cadastro.js';
 import { kitDomain, kitInvoice, withItems, type KitDomain } from '../support/kit-domain.js';
@@ -39,7 +36,7 @@ function proposalFor(invoice: Invoice, state: 'aprovada' | 'alterada' | 'aguarda
   const proposal = Proposal.register({
     classification: invoice.classification,
     dockAction: DockAction.receive(),
-    level: E8_APPROVAL_LEVEL,
+    level: 'coordenacao',
     amountAtRisk: amountAtRiskSemCadastro(invoice, kit.ctx),
     justification: 'teste',
   });

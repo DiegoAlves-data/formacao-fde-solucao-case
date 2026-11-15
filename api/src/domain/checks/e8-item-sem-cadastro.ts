@@ -1,14 +1,10 @@
 import { AmountAtRisk } from '../amount-at-risk.js';
-import type { ApprovalLevel } from '../approval-level.js';
 import type { CheckContext, Product } from '../context.js';
 import { matchByDescription, type DescriptionMatchRequest } from '../description-match.js';
 import { Divergence } from '../divergence.js';
 import type { InvoiceItem, InvoiceView } from '../invoice.js';
 import { Money } from '../money.js';
 import type { Check } from './check.js';
-
-/** Limites de aprovação, linha 3: o E8 vai para a coordenação (#35, AC-4). */
-export const E8_APPROVAL_LEVEL: ApprovalLevel = 'coordenacao';
 
 function supplierProducts(invoice: InvoiceView, ctx: CheckContext): readonly Product[] {
   return ctx.products.filter((p) => p.supplierId === invoice.supplierId);

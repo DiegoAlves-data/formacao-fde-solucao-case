@@ -13,6 +13,9 @@ import type { CheckContext } from '../domain/index.js';
 import { dossierField, dossierReadFailed, type DossierField } from '../dossier/proposal-field.js';
 import { readDossier } from '../dossier/read-dossier.js';
 import type { DossierSource } from '../dossier/source.js';
+import type { DockActionOutbox } from '../connectors/ports.js';
+import { SupabaseRestError } from '../connectors/supabase-rest.js';
+import { publishApprovedDockAction } from '../dock/publish-approved-dock-action.js';
 
 export interface ApprovalDeps {
   store: ApprovalStore;
@@ -20,6 +23,11 @@ export interface ApprovalDeps {
   today?: () => string;
   /** #68: de onde a proposta lê o dossiê do Claude. Sem ele, o dossiê aparece pendente. */
   dossier?: DossierDeps;
+  /**
+   * #43 AC-1: a caixa de saída do WMS. Aprovar ou alterar publica nela a ação na doca, depois de gravar
+   * a decisão. Sem ela, a decisão fica só gravada e a varredura do Cron publica depois.
+   */
+  dockOutbox?: DockActionOutbox;
 }
 
 /** #68: a fonte do dossiê e o contexto da nota, para conferir os números contra o banco. */
@@ -68,7 +76,7 @@ export async function approvalRoutes(
   }
   const action = match[2];
   if (!action) return only(request, 'GET', () => proposalDetail(deps.store, key, identity, directory, deps.dossier));
-  return only(request, 'POST', () => decide(request, deps.store, key, action, identity, directory, today()));
+  return only(request, 'POST', () => decide(request, deps, key, action, identity, directory, today()));
 }
 
 async function only(request: Request, method: string, run: () => Promise<Response>): Promise<Response> {
@@ -173,7 +181,7 @@ async function proposalDossier(key: string, file: CaseFile, dossier?: DossierDep
 /** AC-7 a AC-11: aprovar ou alterar, com o nível de quem passou pelo Access. */
 async function decide(
   request: Request,
-  store: ApprovalStore,
+  deps: ApprovalDeps,
   key: string,
   action: string,
   identity: Identity,
@@ -192,6 +200,7 @@ async function decide(
     decision = parsed.decision;
   }
 
+  const { store } = deps;
   const file = await store.find(key);
   if (!file) return error(404, 'not_found');
   try {
@@ -199,6 +208,7 @@ async function decide(
       paymentBlocked: file.supplierBlocked,
     });
     await store.saveDecision({ ...file, approval });
+    await publishDecision(deps.dockOutbox, key, file.proposal);
     return Response.json({ approval, title: { state: file.title.state, amount: money(file.title.amount) } });
   } catch (e) {
     if (e instanceof NotAllowedToApproveError) return error(403, 'nivel_insuficiente', e.message);
@@ -207,6 +217,22 @@ async function decide(
     }
     if (e instanceof DomainError) return error(422, 'decisao_invalida', e.message);
     throw e;
+  }
+}
+
+/**
+ * #43 AC-1: a decisão gravada chega à doca pela caixa de saída do WMS, idempotente. Se o WMS falha, a
+ * decisão continua valendo (já está gravada): o log leva só a chave e o status HTTP, e a varredura do Cron
+ * (`publishDecidedDockActions`) publica na próxima rodada.
+ */
+async function publishDecision(outbox: DockActionOutbox | undefined, key: string, proposal: CaseFile['proposal']): Promise<void> {
+  if (!outbox) return;
+  try {
+    await publishApprovedDockAction({ type: 'proposta_aprovada', invoiceAccessKey: key, proposal }, outbox);
+  } catch (e) {
+    // #43 Só campos nomeados no log: a mensagem do erro pode trazer o corpo da resposta do PostgREST.
+    const status = e instanceof SupabaseRestError ? ` (HTTP ${e.status})` : '';
+    console.error(`#43 ação na doca da nota ${key} não publicada agora${status}; a varredura do Cron publica depois`);
   }
 }
 

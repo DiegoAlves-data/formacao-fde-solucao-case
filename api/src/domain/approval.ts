@@ -160,7 +160,8 @@ function requiredLevel(
 /**
  * AC-11: receber libera o título; receber parcial o reduz pelo valor das linhas seguradas ou
  * devolvidas (quantidade × preço do item da nota de mesmo SKU); recusar o bloqueia. Liberado ou
- * reduzido, vai para a lista do dia (AC-13). Devolve a mudança a aplicar, já conferida.
+ * reduzido, vai para a lista do dia (AC-13). Exceção, #64: o título da nota E7 fica bloqueado
+ * com qualquer ação, porque a compra já foi paga fora do fluxo. Devolve a mudança a aplicar, já conferida.
  */
 function settlementOf(invoice: Invoice, title: Title, action: DockAction): () => void {
   // #64 #33/AC-2: a nota E7 já foi paga fora do fluxo. Seja qual for a ação na doca, o título fica
@@ -207,7 +208,8 @@ export type Draft = Pick<ProposeInput, 'dockAction' | 'amountAtRisk' | 'justific
 
 /**
  * #63: a proposta padrão pela classificação. Match recebe sem risco; duplicidade recusa com o valor
- * da nota em risco (regra 3); a não catalogada recebe com a cobrança a mais em risco. As demais
+ * da nota em risco (regra 3); #64: o pago fora do fluxo (E7) recebe com o valor da nota em risco e cita o
+ * pagamento vinculado; a não catalogada recebe com a cobrança a mais em risco. As demais
  * exceções começam em receber sem risco, até a história dona de cada uma refinar a ação e o valor;
  * quem aprova pode alterar com justificativa (regra 8).
  */

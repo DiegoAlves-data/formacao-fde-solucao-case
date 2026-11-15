@@ -7,7 +7,7 @@ import { kitContext, kitInvoice, kitSupplier } from './kit.js';
 // #64 / #33 AC-2 e AC-4: a nota E7 fica vinculada ao pagamento já feito, vai para a coordenação
 // #64: (linha 3) e nenhum título dela vai para a lista do dia, seja qual for a ação na doca.
 const TODAY = '2026-11-15';
-const coordenacao: Approver = { email: 'coordenacao@jachegou.test', level: 'coordenacao' };
+const coordinator: Approver = { email: 'coordenacao@jachegou.test', level: 'coordenacao' };
 
 // #64: o PG-5301 da base do kit, pago pela loja antes da NF-069 chegar.
 const PG_5301: Payment = {
@@ -47,7 +47,7 @@ describe('#64 E7 na aprovação: vinculada ao pagamento, sem pagar de novo', () 
 
   it('AC-2: aprovada como proposta, o título não vai para a lista do dia', () => {
     const { invoice, proposal, title } = proposedE7();
-    approve(invoice, proposal, title, coordenacao, { kind: 'aprovar' }, TODAY);
+    approve(invoice, proposal, title, coordinator, { kind: 'aprovar' }, TODAY);
     expect(title.state).toBe('bloqueado');
   });
 
@@ -58,7 +58,7 @@ describe('#64 E7 na aprovação: vinculada ao pagamento, sem pagar de novo', () 
     const partial = DockAction.partial([
       { sku: item!.sku!, quantity: Quantity.of(1, item!.quantity.unit), disposition: 'devolver' },
     ]);
-    approve(invoice, proposal, title, coordenacao, { kind: 'alterar', dockAction: partial, justification: 'devolve um' }, TODAY);
+    approve(invoice, proposal, title, coordinator, { kind: 'alterar', dockAction: partial, justification: 'devolve um' }, TODAY);
     expect(title.state).toBe('bloqueado');
   });
 });

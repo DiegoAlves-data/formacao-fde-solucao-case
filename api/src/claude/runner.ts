@@ -79,6 +79,20 @@ function inBackoff(row: StoredSuggestion, now: Date): boolean {
   return now.getTime() < Date.parse(row.updated_at) + BACKOFF_BASE_MS * 2 ** row.attempts;
 }
 
+/**
+ * #38 O estado de cada chave já gravada: `skip` para as ok, as esgotadas e as ainda na espera (a mesma regra de
+ * planQueue), `retry` para a que errou e já pode ser tentada. Serve à tarefa cujo pending() é caro.
+ */
+export async function keyStates(db: Db, task: string, now: Date): Promise<Map<string, 'skip' | 'retry'>> {
+  const { byKey } = await existingSuggestions(db, task);
+  const keys = new Map<string, 'skip' | 'retry'>();
+  for (const row of byKey.values()) {
+    const skip = row.status === 'ok' || row.attempts >= MAX_ATTEMPTS || inBackoff(row, now);
+    keys.set(row.input_key, skip ? 'skip' : 'retry');
+  }
+  return keys;
+}
+
 type Plan = { readonly queue: PendingRequest<unknown>[]; readonly waiting: number };
 
 /**

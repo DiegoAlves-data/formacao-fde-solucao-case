@@ -6,9 +6,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ClaudeError, type Ask } from '../../src/claude/client.js';
 import { restDb } from '../../src/claude/db.js';
-import { runTasks } from '../../src/claude/runner.js';
+import { MAX_ATTEMPTS, runTasks } from '../../src/claude/runner.js';
 import {
   dossierRequest,
+  DOSSIER_LIMIT,
   dossierTaskWith,
   needsDossier,
   parseDossierOutput,
@@ -33,16 +34,24 @@ const fileOf = (
   approval: unknown = null,
 ): CaseFile => ({ invoice, proposal: { state }, route: { level }, approval }) as unknown as CaseFile;
 
-async function setup(level: Level = 'analista') {
-  const { invoice, ctx, tables } = await kitCase();
-  const fake = new FakePostgrest({ ...tables, claude_suggestions: [] });
+/** Um Db sobre o FakePostgrest, com as linhas de claude_suggestions dadas. */
+function fakeDb(suggestions: Record<string, unknown>[] = []) {
+  const fake = new FakePostgrest({ claude_suggestions: suggestions });
   const rest = new SupabaseRest({ url: 'https://fake.supabase.co', secretKey: 'sb_secret_fake', fetch: fake.fetch });
+  return restDb(rest);
+}
+
+async function setup(level: Level = 'analista', suggestions: Record<string, unknown>[] = []) {
+  const { invoice, ctx, tables } = await kitCase();
+  const fake = new FakePostgrest({ ...tables, claude_suggestions: suggestions });
+  const rest = new SupabaseRest({ url: 'https://fake.supabase.co', secretKey: 'sb_secret_fake', fetch: fake.fetch });
+  const db = restDb(rest);
   const loadContext = vi.fn(async () => ctx);
   const task = dossierTaskWith({
     listAwaiting: async () => [fileOf(invoice, 'aguardando_aprovacao', level)],
     loadContext,
   });
-  const round = (ask: Ask) => runTasks({ db: restDb(rest), ask, tasks: [task] as never, log: () => {} });
+  const round = (ask: Ask) => runTasks({ db, ask, tasks: [task] as never, log: () => {} });
   const gaveta = () =>
     readDossier({
       invoiceAccessKey: KIT_ACCESS_KEY,
@@ -50,7 +59,7 @@ async function setup(level: Level = 'analista') {
       loadContext: async () => ctx,
       source: new SupabaseDossierSource(rest),
     });
-  return { invoice, ctx, fake, task, round, gaveta, loadContext };
+  return { invoice, ctx, fake, db, task, round, gaveta, loadContext };
 }
 
 const sugestoes = (fake: FakePostgrest) => fake.tables.get('claude_suggestions') ?? [];
@@ -74,8 +83,8 @@ describe('#38 quem ganha dossiê', () => {
   });
 
   it('AC-1 o pedido vai com a chave de acesso, o prompt com os dados e o schema do contrato', async () => {
-    const { task, loadContext } = await setup();
-    const { requests } = await task.pending({} as never);
+    const { task, db, loadContext } = await setup();
+    const { requests } = await task.pending(db);
     expect(requests).toHaveLength(1);
     expect(requests[0]?.key).toBe(KIT_ACCESS_KEY);
     const input = requests[0]?.input as DossierInput;
@@ -94,7 +103,7 @@ describe('#38 quem ganha dossiê', () => {
       listAwaiting: async () => [fileOf(invoice, 'aguardando_aprovacao', 'regra')],
       loadContext,
     });
-    expect((await task.pending({} as never)).requests).toEqual([]);
+    expect((await task.pending(fakeDb())).requests).toEqual([]);
     expect(loadContext).not.toHaveBeenCalled();
   });
 
@@ -105,8 +114,62 @@ describe('#38 quem ganha dossiê', () => {
       listAwaiting: async () => [fileOf(invoice, 'aguardando_aprovacao', 'analista')],
       loadContext: async () => withSelf,
     });
-    const { requests } = await task.pending({} as never);
+    const { requests } = await task.pending(fakeDb());
     expect((requests[0]?.input as DossierInput).prompt).toBe(dossierRequest(invoice, ctx).prompt);
+  });
+});
+
+/** Uma linha de claude_suggestions do dossiê para a nota do kit. */
+const stored = (status: 'ok' | 'error', attempts: number, updatedAt = '2026-11-15T00:00:00Z') => ({
+  task: 'dossier',
+  input_key: KIT_ACCESS_KEY,
+  input: {},
+  output: status === 'ok' ? kitGoodRaw() : null,
+  status,
+  error: status === 'ok' ? null : 'ClaudeError: claude: api',
+  attempts,
+  model: 'claude-haiku',
+  updated_at: updatedAt,
+});
+
+describe('#38 a rodada não relê o contexto quando o dossiê já está resolvido', () => {
+  it('AC-6 com a linha ok da nota, não monta pedido nem lê o contexto', async () => {
+    const { task, db, loadContext } = await setup('analista', [stored('ok', 0)]);
+    expect((await task.pending(db)).requests).toEqual([]);
+    expect(loadContext).not.toHaveBeenCalled();
+  });
+
+  it('AC-5 com as tentativas esgotadas, não monta pedido nem lê o contexto', async () => {
+    const { task, db, loadContext } = await setup('analista', [stored('error', MAX_ATTEMPTS)]);
+    expect((await task.pending(db)).requests).toEqual([]);
+    expect(loadContext).not.toHaveBeenCalled();
+  });
+
+  it('AC-5 a nota ainda na espera depois de um erro também fica para depois', async () => {
+    const { task, db, loadContext } = await setup('analista', [stored('error', 1, new Date().toISOString())]);
+    expect((await task.pending(db)).requests).toEqual([]);
+    expect(loadContext).not.toHaveBeenCalled();
+  });
+
+  it('AC-5 o erro que já passou da espera volta a ser pedido', async () => {
+    const { task, db } = await setup('analista', [stored('error', 1, '2026-01-01T00:00:00Z')]);
+    expect((await task.pending(db)).requests.map((r) => r.key)).toEqual([KIT_ACCESS_KEY]);
+  });
+
+  it('mais propostas esperando do que o teto: monta no máximo o teto de pedidos', async () => {
+    const { invoice, ctx } = await kitCase();
+    const files = Array.from({ length: 8 }, (_, i) =>
+      fileOf(
+        // Outra chave, com o resto da nota como está (o protótipo leva as divergências).
+        Object.assign(Object.create(invoice) as CaseFile['invoice'], { accessKey: `${invoice.accessKey.slice(0, -1)}${i}` }),
+        'aguardando_aprovacao',
+        'analista',
+      ),
+    );
+    const task = dossierTaskWith({ listAwaiting: async () => files, loadContext: async () => ctx, limit: 3 });
+    expect((await task.pending(fakeDb())).requests).toHaveLength(3);
+    const byDefault = dossierTaskWith({ listAwaiting: async () => files, loadContext: async () => ctx });
+    expect((await byDefault.pending(fakeDb())).requests).toHaveLength(DOSSIER_LIMIT);
   });
 });
 
@@ -174,6 +237,15 @@ describe('#38 do evento à gaveta', () => {
     await round(vi.fn(async () => { throw new Error('caiu'); }) as unknown as Ask);
     expect(sugestoes(fake)[0]).toMatchObject({ status: 'error', output: null });
     expect(await gaveta()).toMatchObject({ status: 'unavailable', reason: 'claude_failed' });
+  });
+
+  it('AC-2 a resposta fora do formato grava o erro de formato, não um erro inesperado', async () => {
+    const { round, fake } = await setup();
+    await round(answering({ summary: 'x' }));
+    const [row] = sugestoes(fake);
+    expect(row).toMatchObject({ status: 'error', output: null, attempts: 1 });
+    expect(String(row?.error)).toContain('fora do formato');
+    expect(String(row?.error)).toMatch(/^ClaudeError:/);
   });
 
   it('AC-5 sem cota, a rodada para sem gravar nada, e a gaveta segue sem dossiê', async () => {

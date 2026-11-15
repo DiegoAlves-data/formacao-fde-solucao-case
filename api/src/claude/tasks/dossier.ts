@@ -1,7 +1,9 @@
 // #38: tarefa do Claude (#66, #171) que escreve o dossiê da proposta encaminhada a uma pessoa.
 // #38 A tarefa não decide nem grava: o laço registra a saída em claude_suggestions, e a gaveta lê e confere
 // cada número contra o banco na hora de mostrar (readDossier, #68). Ação, nível e valor em risco vêm da regra.
-import type { Ask } from '../client.js';
+import { ClaudeError, type Ask } from '../client.js';
+import type { Db } from '../db.js';
+import { keyStates } from '../runner.js';
 import type { ClaudeTask } from '../task.js';
 import { SupabaseApprovalStore } from '../../approval/supabase-store.js';
 import { supabaseConnectors } from '../../connectors/supabase-connectors.js';
@@ -28,7 +30,17 @@ export type DossierTaskDeps = {
   readonly listAwaiting: () => Promise<readonly CaseFile[]>;
   /** O contexto da nota, como a gaveta monta (#68). */
   readonly loadContext: (invoiceAccessKey: string) => Promise<CheckContext>;
+  /** Teto de pedidos montados por rodada; o padrão é o do Cron (CRON_LIMIT). */
+  readonly limit?: number;
+  /** Relógio da espera entre tentativas, o mesmo do laço. */
+  readonly now?: () => Date;
 };
+
+/**
+ * #38 O teto de pedidos que pending() monta por rodada. É o CRON_LIMIT de cron.ts, repetido aqui porque cron.ts
+ * importa o registro das tarefas e a importação de volta faria um ciclo.
+ */
+export const DOSSIER_LIMIT = 5;
 
 /** #38 AC-1: só a proposta que espera uma pessoa ganha dossiê. A regra aprova o resto sozinha. */
 export function needsDossier(file: Pick<CaseFile, 'proposal' | 'route' | 'approval'>): boolean {
@@ -67,11 +79,19 @@ export function dossierTaskWith(deps: DossierTaskDeps): ClaudeTask<DossierInput,
     name: DOSSIER_TASK,
 
     /**
-     * #38 AC-1 e AC-6: as propostas que esperam uma pessoa. O laço tira as que já têm linha ok e espera as
-     * que erraram, e a linha é única por (task, chave), então o mesmo evento não gera duas chamadas.
+     * #38 AC-1 e AC-6: as propostas que esperam uma pessoa. A chave já ok, esgotada ou ainda na espera sai antes
+     * do contexto (keyStates, a mesma regra do laço): sem nada novo, a rodada não lê as 7 tabelas nem chama o
+     * Claude. Antes, o contexto era lido em toda rodada, e na rodada que estoura os subrequests a chamada ou o
+     * upsert do erro falhava sem linha, e a chave voltava na rodada seguinte (AC-5, AC-6).
      */
-    async pending() {
-      const files = (await deps.listAwaiting()).filter(needsDossier);
+    async pending(db: Db) {
+      const awaiting = (await deps.listAwaiting()).filter(needsDossier);
+      if (awaiting.length === 0) return { requests: [], dropped: 0 };
+      const states = await keyStates(db, DOSSIER_TASK, (deps.now ?? (() => new Date()))());
+      // #38 As nunca tentadas primeiro, como na fila do laço; o teto vem depois, antes de ler o contexto.
+      const fresh = awaiting.filter((f) => !states.has(f.invoice.accessKey));
+      const retries = awaiting.filter((f) => states.get(f.invoice.accessKey) === 'retry');
+      const files = [...fresh, ...retries].slice(0, deps.limit ?? DOSSIER_LIMIT);
       if (files.length === 0) return { requests: [], dropped: 0 };
       // #38 Um contexto só para a rodada: o catálogo de cada nota usa as mesmas tabelas. A chave vazia não tira
       // nenhuma nota das capturadas; cada nota sai da própria lista logo abaixo.
@@ -88,7 +108,8 @@ export function dossierTaskWith(deps: DossierTaskDeps): ClaudeTask<DossierInput,
     /** #38 AC-2: pergunta com a saída estruturada no schema do contrato e valida antes de devolver. */
     async run(input: DossierInput, ask: Ask): Promise<DossierOutput> {
       const output = parseDossierOutput(await ask<unknown>(input));
-      if (!output) throw new Error('dossier: resposta do Claude fora do formato');
+      // #38 ClaudeError leva a mensagem para a linha de erro; 'format' não é global, então só esta chave erra.
+      if (!output) throw new ClaudeError('format', 'dossier: resposta do Claude fora do formato');
       return output;
     },
   };

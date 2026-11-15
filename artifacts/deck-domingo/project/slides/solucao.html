@@ -1,0 +1,26 @@
+<section id="solucao" class="stone dense" style="gap:24px">
+<p class="ov">A ARQUITETURA DE SOLUÇÃO</p>
+<h2>A solução, <span class="serif">de ponta a ponta.</span></h2>
+<div class="flow">
+<div class="step in"><p class="k">FONTES</p><h3>Base do kit</h3><p class="d">Simula os sistemas da Já Chegou</p></div>
+<x-shape kind="arrow-right" class="arrow"></x-shape>
+<div class="step in"><p class="k">CONECTORES</p><h3>Um por sistema</h3><p class="d">SEFAZ, ERP, WMS e banco. Hoje, mocks.</p></div>
+<x-shape kind="arrow-right" class="arrow"></x-shape>
+<div class="step in2" style="flex:1.4"><p class="k">API E ESTEIRA</p><h3>Worker em TypeScript</h3><p class="d">Com Cron. Conferência, Compras, Cadastro, Recebimento, Contas a pagar e Pagamentos.</p></div>
+<x-shape kind="arrow-right" class="arrow"></x-shape>
+<div class="step in3"><p class="k">MODELOS</p><h3>Claude e Clef</h3><p class="d">Claude pelo SDK, com saída estruturada. Clef pelo Workers AI.</p></div>
+</div>
+<div class="cols4" style="gap:16px">
+<div class="tile in2"><h3>Tela de aprovação</h3><p class="d">Cloudflare Access na frente: entra com o e-mail</p></div>
+<div class="tile in2"><h3>Supabase</h3><p class="d">Banco e arquivos em São Paulo, exigência do cliente</p></div>
+<div class="tile in3"><h3>Aviso</h3><p class="d">O Worker avisa quem aprova pelo Resend</p></div>
+<div class="tile in3"><h3>GitHub Actions</h3><p class="d">Publica os Workers e aplica as migrações</p></div>
+</div>
+<div class="callout in3"><p class="small"><b>Só o Worker fala com o banco.</b> 1. RLS ligado, sem política: a chave pública não lê nada. 2. O navegador nunca fala direto com o Supabase. 3. O MCP chama a API, nunca o banco.</p></div>
+<div class="foot"><img src="/_blob/8f801eb20157e99cf5fb4057d35189d2" alt="Barte"><span>Arquitetura de solução · <span class="pg"></span></span></div>
+<aside>4 minutos. A solução de ponta a ponta.
+As fontes, por enquanto, são a base do kit, que simula os sistemas da Já Chegou. Cada sistema tem o seu conector: SEFAZ, ERP, WMS e banco. Trocar o mock pela fonte real muda só o conector.
+A API e a esteira rodam num Worker em TypeScript, com Cron. É ali que ficam os contextos do domínio. O Worker chama o Claude pelo SDK, com saída estruturada, e o Clef pelo Workers AI.
+A tela de aprovação fica atrás do Cloudflare Access: a pessoa entra com o e-mail. Os dados ficam no Supabase, em São Paulo, porque o cliente exige dado fiscal no Brasil. O aviso sai pelo Resend, e o GitHub Actions publica os Workers e aplica as migrações.
+A regra principal: só o Worker fala com o banco. O navegador nunca fala com o Supabase, e o servidor MCP chama a API, nunca o banco.</aside>
+</section>

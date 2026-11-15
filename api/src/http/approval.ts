@@ -9,11 +9,23 @@ import type { Money } from '../domain/money.js';
 import { Quantity, type Unit } from '../domain/quantity.js';
 import type { Env } from '../env.js';
 import type { Identity } from './access.js';
+import type { CheckContext } from '../domain/index.js';
+import { dossierField, dossierReadFailed, type DossierField } from '../dossier/proposal-field.js';
+import { readDossier } from '../dossier/read-dossier.js';
+import type { DossierSource } from '../dossier/source.js';
 
 export interface ApprovalDeps {
   store: ApprovalStore;
   /** O dia de hoje em Brasília (AAAA-MM-DD). Injetável para os testes. */
   today?: () => string;
+  /** #68: de onde a proposta lê o dossiê do Claude. Sem ele, o dossiê aparece pendente. */
+  dossier?: DossierDeps;
+}
+
+/** #68: a fonte do dossiê e o contexto da nota, para conferir os números contra o banco. */
+export interface DossierDeps {
+  source: DossierSource;
+  context: (invoiceAccessKey: string) => Promise<CheckContext>;
 }
 
 const PROPOSAL_PATH = /^\/api\/propostas\/([^/]+)(?:\/(aprovar|alterar))?$/;
@@ -55,7 +67,7 @@ export async function approvalRoutes(
     return error(400, 'chave_invalida');
   }
   const action = match[2];
-  if (!action) return only(request, 'GET', () => proposalDetail(deps.store, key, identity, directory));
+  if (!action) return only(request, 'GET', () => proposalDetail(deps.store, key, identity, directory, deps.dossier));
   return only(request, 'POST', () => decide(request, deps.store, key, action, identity, directory, today()));
 }
 
@@ -109,9 +121,11 @@ async function proposalDetail(
   key: string,
   identity: Identity,
   directory: ApproverDirectory,
+  dossier?: DossierDeps,
 ): Promise<Response> {
   const file = await store.find(key);
   if (!file) return error(404, 'not_found');
+  const dossierView = await proposalDossier(key, file, dossier);
   return Response.json({
     ...summary(file, directory(identity.email)),
     justification: file.proposal.justification,
@@ -130,7 +144,30 @@ async function proposalDetail(
     })),
     title: { state: file.title.state, amount: money(file.title.amount), dueOn: file.title.dueOn },
     approval: file.approval,
+    dossier: dossierView,
   });
+}
+
+/**
+ * #68: o dossiê é conferido contra o banco na hora de mostrar; sem fonte, fica pendente. Um erro ao
+ * ler não derruba a proposta (#38/AC-4): vira `read_failed` e fica no log só com a chave e a mensagem.
+ * O contexto da nota só é carregado quando há sugestão `ok`; sem linha, fica `pending` sem lê-lo.
+ */
+async function proposalDossier(key: string, file: CaseFile, dossier?: DossierDeps): Promise<DossierField> {
+  if (!dossier) return dossierField(null);
+  try {
+    return dossierField(
+      await readDossier({
+        invoiceAccessKey: key,
+        invoice: file.invoice,
+        loadContext: () => dossier.context(key),
+        source: dossier.source,
+      }),
+    );
+  } catch (e) {
+    console.error(`#68 dossiê da nota ${key} não lido: ${e instanceof Error ? e.message : String(e)}`);
+    return dossierReadFailed();
+  }
 }
 
 /** AC-7 a AC-11: aprovar ou alterar, com o nível de quem passou pelo Access. */

@@ -1,5 +1,6 @@
 // Captura do Cron: lê a SEFAZ, grava as notas novas e confere as que estão a conferir (#59, AC-5).
-import type { CheckContext, Invoice } from '../domain/index.js';
+import { descriptionMatchRequests } from '../domain/checks/e8-item-sem-cadastro.js';
+import { withDescriptionMatches, type CheckContext, type DescriptionSuggester, type Invoice } from '../domain/index.js';
 import type { CheckFailure, InvoiceStore } from '../connectors/invoice-store.js';
 import type {
   BankPort,
@@ -19,6 +20,8 @@ export type CaptureDeps = {
   readonly wms: WmsCountPort;
   readonly invoices: InvoiceStore;
   readonly now?: () => Date;
+  /** #35 O Claude, que sugere o casamento por descrição na rodada. Sem ele, a regra decide sozinha. */
+  readonly descriptions?: DescriptionSuggester;
 };
 
 export type CaptureResult = {
@@ -40,7 +43,14 @@ export async function captureInvoices(deps: CaptureDeps): Promise<CaptureResult>
   const toCheck = issued.filter((i) => pending.has(i.accessKey));
   if (toCheck.length > 0) {
     const ctx = await buildContext(deps, issued);
-    const { checked, failures } = checkEach(toCheck, ctx);
+    // #66 Com as sugestões do Claude, a conferência roda dentro da rodada, e o cache se limpa no fim.
+    const { checked, failures } = deps.descriptions
+      ? await withDescriptionMatches(
+          deps.descriptions,
+          toCheck.flatMap((invoice) => descriptionMatchRequests(invoice, ctx)),
+          () => checkEach(toCheck, ctx),
+        )
+      : checkEach(toCheck, ctx);
     await deps.invoices.saveChecked(checked, (deps.now ?? (() => new Date()))().toISOString());
     await deps.invoices.markCheckFailed(failures);
     return { seen: issued.length, inserted: inserted.length, checked: checked.length, failed: failures.length };

@@ -12,6 +12,8 @@ import { tasksFor } from './tasks/index.js';
 /**
  * #171 Pedidos por tarefa a cada rodada. Cada pedido custa 2 subrequests (a Messages API e o upsert) e a rodada
  * lê umas 7 vezes antes: 2 tarefas × 5 × 2 + 7 = 27, dentro dos 50 do plano gratuito. A rodada vai depois da captura.
+ * #38 O dossiê lê mais: as propostas que esperam (umas 6 leituras) e o contexto, uma vez por rodada (7), e mais 5 × 2.
+ * Com as três tarefas cheias a rodada chega perto de 51: no plano gratuito, o que passar fica para a próxima rodada.
  */
 export const CRON_LIMIT = 5;
 

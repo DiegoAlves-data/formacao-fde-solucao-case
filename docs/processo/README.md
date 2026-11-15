@@ -30,7 +30,7 @@ A estratégia tem cinco escolhas, cada uma ligada a uma causa-raiz do pagar erra
 | **Duplicidade primeiro, e bloqueada na hora** | O gateway "Duplicada?" logo depois da classificação leva direto a "Bloquear o título duplicado", sem esperar caminhão | A exceção mais cara de errar: paga a nota inteira de novo |
 | **O que já foi pago não paga de novo** | O gateway "Já paga fora do fluxo?" vincula a nota tardia ao pagamento da compra emergencial e fecha sem passar pela lista | A compra da loja paga por fora, que hoje volta a ser paga quando a nota chega |
 | **O que bate passa direto** | O ramo "regra" de "Quem decide?" pula o aprovador | O meio: a conferência manual não escala com 11,4 mil notas por mês |
-| **A pessoa só na exceção, pela régua** | "Confirmar ou alterar a ação", na raia do aprovador da alçada | O mandato: a decisão vai para quem tem alçada, e o CFO deixa de aprovar tudo |
+| **A pessoa só na exceção, pelos limites de aprovação** | "Aprovar a proposta", na raia do aprovador da alçada | O mandato: a decisão vai para quem tem alçada, e o CFO deixa de aprovar tudo |
 | **O título só vai para a lista conferido** | Contas a pagar libera, devolve a diferença ou bloqueia depois da conciliação | A visibilidade e o dinheiro: nada é pago antes de o recebido bater |
 
 Dois momentos de conferência, porque a informação chega em dois tempos:
@@ -40,7 +40,8 @@ Dois momentos de conferência, porque a informação chega em dois tempos:
    caminhão ("Planejar o recebimento").
 2. **Na doca, com o caminhão parado e antes do aceite**: falta física e quantidade menor só
    aparecem quando a mercadoria é contada. A doca conta, o agente concilia a contagem com a
-   nota e o pedido, e **a doca decide**: receber, receber parcial (com nota de devolução da
+   nota e o pedido, o aprovador confirma a ação com a contagem já no banco, e **a doca
+   executa**: receber, receber parcial (com nota de devolução da
    diferença) ou recusar (com o título bloqueado). A decisão vem antes do aceite porque, para
    o jurídico, aceitar a nota é aceitar o pedido.
 

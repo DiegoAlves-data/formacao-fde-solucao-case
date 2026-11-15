@@ -1,4 +1,5 @@
 import { AmountAtRisk } from '../amount-at-risk.js';
+import { routeDivergences } from '../approval-policy.js';
 import type { ApprovalLevel } from '../approval-level.js';
 import type { CheckContext, Product, PurchaseOrder, PurchaseOrderItem } from '../context.js';
 import { Divergence } from '../divergence.js';
@@ -130,17 +131,14 @@ export function e4AmountAtRisk(invoice: InvoiceView, ctx: CheckContext): AmountA
   return AmountAtRisk.of(risk.compare(invoice.total) > 0 ? invoice.total : risk, invoice.total);
 }
 
-/** Limites linhas 4 e 5, AC-4, #67: R$ 20 mil, a fronteira entre analista e coordenação. */
-const ANALYST_LIMIT = Money.ofCents(2_000_000);
-
 /**
- * Limites de aprovação, linhas 4 e 5, AC-4: E4 em nota de até R$ 20 mil (inclusive) vai ao analista;
- * acima, à coordenação. As linhas 1 e 2 (duplicidade, nota acima de R$ 100 mil, fornecedor com
- * pagamento bloqueado) e o maior nível entre as divergências da nota (regra 7) são da política geral
- * de aprovação, não deste plano: ela combina este nível com os demais.
+ * AC-4: o nível vem da régua (`routeDivergences`, linhas 2, 4 e 5): E4 em nota de até R$ 20 mil
+ * (inclusive) vai ao analista; acima, à coordenação; acima de R$ 100 mil, à diretoria. A duplicidade
+ * (linha 1) e o maior nível entre as divergências da nota (regra 7) ficam com a política geral.
  */
 export function e4ApprovalLevel(invoiceTotal: Money): ApprovalLevel {
-  return invoiceTotal.compare(ANALYST_LIMIT) > 0 ? 'coordenacao' : 'analista';
+  // #110: a régua (#63) é a fonte única do encaminhamento; não há limite de valor aqui.
+  return routeDivergences([{ classification: 'E4' }], invoiceTotal).level;
 }
 
 /**

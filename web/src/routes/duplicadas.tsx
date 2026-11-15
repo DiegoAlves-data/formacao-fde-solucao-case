@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Alert, Drawer, Table, Text } from "barte-design-system";
+import { Alert, Text } from "barte-design-system";
 import {
   DataList,
   ReconciliationDiff,
@@ -14,6 +14,8 @@ import { EmptyState } from "../components/EmptyState";
 import { GridBadge } from "../components/GridBadge";
 import { InvoiceCell } from "../components/InvoiceCell";
 import { Screen } from "../components/Screen";
+import { InvoiceDrawer } from "../approval/InvoiceDrawer";
+import { RowTable } from "../components/RowTable";
 import { useLoad } from "../components/useLoad";
 import type { RouteProps } from "./types";
 import { texts } from "../texts";
@@ -110,11 +112,12 @@ export default function NotasDuplicadas(_props: RouteProps) {
               context={texts.duplicadas.statWhy.context}
             />
           </StatGrid>
-          <Table<DuplicateDto>
+          <RowTable<DuplicateDto>
             data={duplicates}
             rowKey={(d) => d.duplicate.accessKey}
             size="md"
-            onRowClick={(d) => setOpenKey(d.duplicate.accessKey)}
+            onOpenRow={(d) => setOpenKey(d.duplicate.accessKey)}
+            rowLabel={(d) => texts.grid.openInvoice(d.duplicate.number)}
             columns={[
               {
                 key: "duplicate",
@@ -173,7 +176,7 @@ export default function NotasDuplicadas(_props: RouteProps) {
               },
             ]}
           />
-          {open !== undefined ? <DuplicateDrawer duplicate={open} onClose={() => setOpenKey(null)} /> : null}
+          {open !== undefined ? <DuplicateDrawer duplicate={open} onClose={() => setOpenKey(null)} onDecided={retry} /> : null}
         </>
       )}
     </Screen>
@@ -181,10 +184,10 @@ export default function NotasDuplicadas(_props: RouteProps) {
 }
 
 /** O detalhe de uma duplicidade: a original contra a duplicada, campo a campo. */
-function DuplicateDrawer({ duplicate: d, onClose }: { duplicate: DuplicateDto; onClose: () => void }) {
+function DuplicateDrawer({ duplicate: d, onClose, onDecided }: { duplicate: DuplicateDto; onClose: () => void; onDecided: () => void }) {
   const badge = titleBadge(d.titleState);
   return (
-    <Drawer isOpen title={texts.duplicadas.drawerTitle(d.duplicate.number)} onClose={onClose} className="shell-connection-panel">
+    <InvoiceDrawer invoiceAccessKey={d.duplicate.accessKey} title={() => texts.duplicadas.drawerTitle(d.duplicate.number)} onClose={onClose} onDecided={onDecided}>
       <div style={{ display: "grid", gap: "var(--spacing-xl)" }}>
         <Alert variant={ALERT_VARIANT[badge.tone]} title={badge.label} description={ALERT_DESCRIPTION[badge.tone]} />
         {d.original === null ? (
@@ -208,6 +211,6 @@ function DuplicateDrawer({ duplicate: d, onClose }: { duplicate: DuplicateDto; o
           ]}
         />
       </div>
-    </Drawer>
+    </InvoiceDrawer>
   );
 }

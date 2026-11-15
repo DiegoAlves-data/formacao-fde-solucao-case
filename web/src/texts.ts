@@ -120,6 +120,11 @@ export const texts = {
     wms: "WMS · recebimento",
   } satisfies Record<EvidenceSource, string>,
 
+  grid: {
+    /** #209 O rótulo da linha da grid para leitor de tela. */
+    openInvoice: (number: string) => `Abrir a nota ${number}`,
+  },
+
   fila: {
     title: "Fila de aprovação",
     subtitle:
@@ -148,6 +153,7 @@ export const texts = {
     drawerTitle: (number: string | null) => (number ? `Proposta da NF ${number}` : "Proposta"),
     drawerError: "Não consegui ler esta proposta agora.",
     drawerLoading: "Carregando a proposta…",
+    noProposal: "Esta nota não tem proposta de aprovação.",
   },
 
   listaDoDia: {

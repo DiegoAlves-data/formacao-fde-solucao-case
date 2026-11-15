@@ -39,7 +39,7 @@ produção entram com `npx wrangler secret put <NOME>`, nunca no git.
 ## Listas paginadas por cursor (#159)
 
 As quatro listas das telas (`GET /api/fila`, `GET /api/hoje`, `GET /api/duplicates` e `GET /api/doca`,
-mais `GET /api/recebimento-loja`, que é o mesmo handler da doca) paginam por cursor. O código está em
+mais `GET /api/recebimento-loja`, que é o mesmo handler da doca, mas é outra lista) paginam por cursor. O código está em
 `src/http/page.ts`.
 
 **Dois modos.** Sem `cursor` e sem `limite` na query, cada rota responde como antes da #159: a lista
@@ -80,7 +80,7 @@ de acesso da nota; doca, o número da nota (como número) e a chave de acesso.
 
 **Cursor.** É opaco: base64url de um JSON versionado com a tupla de ordenação do último item entregue e o
 nome da lista. A próxima página são os itens estritamente depois dessa tupla, e não uma posição: um item
-decidido entre duas páginas não faz outro pular nem repetir. O cursor de uma lista não serve noutra. Quem
+decidido entre duas páginas não faz outro pular nem repetir. O cursor de uma lista não serve noutra: a doca (`doca`) e o recebimento na loja (`recebimento-loja`) são duas listas. Quem
 consome trata o cursor como texto e não o monta.
 
 ## Cloudflare Access

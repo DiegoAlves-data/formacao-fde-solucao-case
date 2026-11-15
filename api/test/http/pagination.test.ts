@@ -7,6 +7,7 @@ import { ApprovalPolicy } from '../../src/domain/approval-policy.js';
 import { Invoice, Money, Title } from '../../src/domain/index.js';
 import { SupabaseRest } from '../../src/connectors/supabase-rest.js';
 import { wmsDockActionOutbox } from '../../src/connectors/wms-dock-action.js';
+import { appStoreActionOutbox } from '../../src/connectors/store-action.js';
 import { DockAction } from '../../src/domain/index.js';
 import type { Env } from '../../src/env.js';
 import type { AccessVerifier } from '../../src/http/access.js';
@@ -28,6 +29,8 @@ const env: Env = {
   BARTE_ACADEMY_SUPABASE_URL: 'https://supabase.test',
   BARTE_ACADEMY_SUPABASE_SECRET_KEY: 'sb_teste',
 };
+// #159 O Worker só chama `waitUntil`; `passThroughOnException` e `props` completam o tipo e o teste não os lê.
+// O compilador não vê isso, por isso a asserção dupla.
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as unknown as ExecutionContext;
 const verifier: AccessVerifier = { verify: async (token) => ({ ok: true, identity: { email: token } }) };
 
@@ -199,34 +202,42 @@ const duplicatesLane: Lane = {
 
 // --- doca -------------------------------------------------------------------------------------------
 
-const dockLane: Lane = {
-  name: 'doca',
-  async arrange() {
-    const [base] = kitNotesOf('CD-03', DOCK_DAY);
-    if (!base) throw new Error('arranjo: o kit não tem nota do CD-03 em 2026-11-11');
-    // Números de 1 a 3 dígitos, para que a ordem numérica difira da alfabética.
-    const notes = Array.from({ length: TOTAL_ITEMS }, (_, i) => ({
-      ...base,
-      chave: `35261100000000000000550010000008${String(i).padStart(3, '0')}1000000000`,
-      numero: 5 + i * 3,
-      destino: 'CD-03',
-      data_emissao: DOCK_DAY,
-    }));
-    const fake = new FakePostgrest({ invoices: shuffled(notes).map(invoiceRow) });
-    const rest = new SupabaseRest({ url: 'https://supabase.test', secretKey: 'sb_teste', fetch: fake.fetch });
-    for (const note of notes.filter((_, i) => i % 7 === 0)) {
-      await wmsDockActionOutbox(rest).publish({ invoiceAccessKey: note.chave, action: DockAction.receive() });
-    }
-    const worker = createWorker({ verifier, dock: { supabase: () => rest, today: () => DOCK_DAY } });
-    return (query) => callAs(worker, `/api/doca${query}`, 'doca@jachegou.test');
-  },
-  oldKeys: ['awaiting', 'date', 'destination', 'destinations', 'rows'],
-  context: ['date', 'destination', 'destinations'],
-  itemsOf: (whole) => whole.rows as Item[],
-  keyOf: (item) => item.invoiceAccessKey as string,
-  ordered: (items) => items.every((item, i) => i === 0 || Number(items[i - 1]?.number) < Number(item.number)),
-  aggregates: (whole) => ({ awaiting: whole.awaiting }),
-};
+/** A doca do CD e o recebimento na loja são o mesmo handler, com duas listas: cada uma com a sua. */
+function dockLaneOf(name: string, path: string, destination: string): Lane {
+  return {
+    name,
+    async arrange() {
+      const [base] = kitNotesOf('CD-03', DOCK_DAY);
+      if (!base) throw new Error('arranjo: o kit não tem nota do CD-03 em 2026-11-11');
+      // Números de 1 a 3 dígitos, para que a ordem numérica difira da alfabética.
+      const notes = Array.from({ length: TOTAL_ITEMS }, (_, i) => ({
+        ...base,
+        chave: `35261100000000000000550010000008${String(i).padStart(3, '0')}1000000000`,
+        numero: 5 + i * 3,
+        destino: destination,
+        data_emissao: DOCK_DAY,
+      }));
+      const fake = new FakePostgrest({ invoices: shuffled(notes).map(invoiceRow) });
+      const rest = new SupabaseRest({ url: 'https://supabase.test', secretKey: 'sb_teste', fetch: fake.fetch });
+      for (const note of notes.filter((_, i) => i % 7 === 0)) {
+        const action = DockAction.receive();
+        if (destination.startsWith('LJ-')) await appStoreActionOutbox(rest).publish({ invoiceAccessKey: note.chave, store: destination, action });
+        else await wmsDockActionOutbox(rest).publish({ invoiceAccessKey: note.chave, action });
+      }
+      const worker = createWorker({ verifier, dock: { supabase: () => rest, today: () => DOCK_DAY } });
+      return (query) => callAs(worker, `${path}${query}`, 'doca@jachegou.test');
+    },
+    oldKeys: ['awaiting', 'date', 'destination', 'destinations', 'rows'],
+    context: ['date', 'destination', 'destinations'],
+    itemsOf: (whole) => whole.rows as Item[],
+    keyOf: (item) => item.invoiceAccessKey as string,
+    ordered: (items) => items.every((item, i) => i === 0 || Number(items[i - 1]?.number) < Number(item.number)),
+    aggregates: (whole) => ({ awaiting: whole.awaiting }),
+  };
+}
+
+const dockLane = dockLaneOf('doca', '/api/doca', 'CD-03');
+const storeLane = dockLaneOf('recebimento-loja', '/api/recebimento-loja', 'LJ-012');
 
 // --- o contrato, nas quatro --------------------------------------------------------------------------
 
@@ -252,7 +263,7 @@ async function walk(get: Get, limit: number): Promise<Paged[]> {
   return pages;
 }
 
-describe.each([queueLane, todayLane, duplicatesLane, dockLane])('#159 lista $name', (lane) => {
+describe.each([queueLane, todayLane, duplicatesLane, dockLane, storeLane])('#159 lista $name', (lane) => {
   const arranged = lane.arrange();
   const wholeOf = async (get: Get) => (await (await get('')).json()) as Whole;
 
@@ -325,7 +336,7 @@ describe.each([queueLane, todayLane, duplicatesLane, dockLane])('#159 lista $nam
 
   it('#159/AC-3 o cursor de outra lista devolve 400 com cursor_invalido', async () => {
     const get = await arranged;
-    const lanes = [queueLane, todayLane, duplicatesLane, dockLane].filter((l) => l !== lane);
+    const lanes = [queueLane, todayLane, duplicatesLane, dockLane, storeLane].filter((l) => l !== lane);
     for (const other of lanes) {
       const otherGet = await other.arrange();
       const foreign = (await pageAt(otherGet, 'limite=30')).nextCursor ?? '';
@@ -356,7 +367,7 @@ describe.each([queueLane, todayLane, duplicatesLane, dockLane])('#159 lista $nam
     }
     // Os dinheiros dos agregados trazem o texto em reais, como o resto da API.
     for (const value of Object.values(pages[0]?.aggregates ?? {})) {
-      if (typeof value === 'object' && value !== null && 'cents' in value) expect((value as unknown as { text: string }).text).toMatch(/^R\$/);
+      if (typeof value === 'object' && value !== null && 'cents' in value) expect(value).toHaveProperty('text', expect.stringMatching(/^R\$/));
     }
   });
 

@@ -56,12 +56,12 @@ function logFailure(error: unknown): null {
 }
 
 /** #159 A ordem da doca: o número da nota, como número, e a chave de acesso para desempatar. */
-const DOCK_ORDER: Ordering<DockRow> = {
-  list: "doca",
+const dockOrder = (list: "doca" | "recebimento-loja"): Ordering<DockRow> => ({
+  list,
   shape: ["string", "string"],
   key: (row) => [row.number, row.invoiceAccessKey],
   compare: (a: Key, b: Key) => compareNumbers(String(a[0]), String(b[0])) || (a[1] === b[1] ? 0 : (a[1] as string) < (b[1] as string) ? -1 : 1),
-};
+});
 
 const invalid = () => Response.json({ error: "invalid_query" }, { status: 400 });
 
@@ -72,6 +72,8 @@ const invalid = () => Response.json({ error: "invalid_query" }, { status: 400 })
 export function dockHandler(deps: DockDeps = {}, place: ReceivingPlace = "doca_cd"): (request: Request, env: Env) => Promise<Response> {
   const supabase = deps.supabase ?? supabaseFromEnv;
   const today = deps.today ?? (() => todayInSaoPaulo());
+  // #159 São duas listas: o cursor de uma não serve na outra.
+  const order = dockOrder(place === "app_loja" ? "recebimento-loja" : "doca");
 
   return async (request: Request, env: Env): Promise<Response> => {
     const params = new URL(request.url).searchParams;
@@ -91,7 +93,7 @@ export function dockHandler(deps: DockDeps = {}, place: ReceivingPlace = "doca_c
     const [invoices, published] = loaded;
     const board = dockBoard({ invoices, published, destination: requested, date, place });
     if (query.kind === "whole") return Response.json(board);
-    const page = pageOf(DOCK_ORDER, sortedBy(board.rows, DOCK_ORDER), query);
+    const page = pageOf(order, sortedBy(board.rows, order), query);
     if (!page) return invalidCursor();
     const { destination, date: boardDate, destinations, awaiting } = board;
     return Response.json({ destination, date: boardDate, destinations, ...page, aggregates: { awaiting } });

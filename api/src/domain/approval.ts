@@ -163,6 +163,9 @@ function requiredLevel(
  * reduzido, vai para a lista do dia (AC-13). Devolve a mudança a aplicar, já conferida.
  */
 function settlementOf(invoice: Invoice, title: Title, action: DockAction): () => void {
+  // #64 #33/AC-2: a nota E7 já foi paga fora do fluxo. Seja qual for a ação na doca, o título fica
+  // #64 bloqueado, regularizado pelo pagamento vinculado, e nunca vai para a lista do dia.
+  if (invoice.classification === 'E7') return () => title.block();
   if (action.kind === 'recusar') return () => title.block();
   if (action.kind === 'receber') {
     return () => {
@@ -215,6 +218,15 @@ export function draftProposal(invoice: Invoice, overcharge: Money | null): Draft
       dockAction: DockAction.refuse(),
       amountAtRisk: invoice.total,
       justification: 'Duplicidade: a mesma compra já foi cobrada; ninguém paga até a coordenação resolver',
+    };
+  }
+  if (classification === 'E7') {
+    // #64 #33/AC-2: a mercadoria já está na loja; o que corre risco é pagar a nota inteira de novo.
+    const payment = invoice.divergences.find((d) => d.classification === 'E7')?.evidence[0]?.reference;
+    return {
+      dockAction: DockAction.receive(),
+      amountAtRisk: invoice.total,
+      justification: `Pago fora do fluxo: a loja já pagou esta compra (${payment ?? 'pagamento vinculado'}); a nota fica vinculada e não vai à lista do dia`,
     };
   }
   if (classification === 'NAO_CATALOGADA' && overcharge) {

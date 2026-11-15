@@ -123,10 +123,12 @@ async function runOne(
   counts: Counts,
 ): Promise<boolean> {
   const attempts = previous?.attempts ?? 0;
+  const clock = options.now ?? (() => new Date());
+  const started = clock().getTime();
   let row: Row;
   try {
     const output = await task.run(request.input, options.ask);
-    row = { output, status: 'ok', error: null, attempts };
+    row = { output, status: 'ok', error: null, attempts, ...task.rowFields?.({ latencyMs: clock().getTime() - started }) };
     counts.ok += 1;
   } catch (error) {
     const message = storedError(error, options.secrets);
@@ -135,9 +137,15 @@ async function runOne(
     // #171 Limite de uso ou credencial recusada vale para a rodada toda: não gasta tentativa de nenhuma
     // chave nem grava linha de erro, e interrompe. A regra decide sozinha e a próxima rodada repete.
     if (error instanceof ClaudeError && error.isGlobal) return true;
-    row = { output: null, status: 'error', error: message, attempts: attempts + 1 };
+    row = {
+      output: null,
+      status: 'error',
+      error: message,
+      attempts: attempts + 1,
+      ...task.rowFields?.({ error, latencyMs: clock().getTime() - started }),
+    };
   }
-  const updatedAt = (options.now ?? (() => new Date()))().toISOString();
+  const updatedAt = clock().toISOString();
   // #66 A linha nova entra com ignore-duplicates; a que estava em erro é refeita com merge-duplicates.
   await options.db.upsert(
     TABLE,

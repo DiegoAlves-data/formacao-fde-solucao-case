@@ -19,4 +19,9 @@ export type ClaudeTask<I, O> = {
   pending(db: Db): Promise<PendingResult<I>>;
   /** #66 Pergunta ao Claude e devolve a saída já validada, pronta para gravar. */
   run(input: I, ask: Ask): Promise<O>;
+  /**
+   * #130 Colunas a mais da linha gravada pelo laço, a partir do resultado (`error` ausente é ok). Opcional:
+   * só o dossiê grava `trigger`, `reason` e `latency_ms`; as outras tarefas deixam essas colunas nulas.
+   */
+  rowFields?(outcome: { readonly error?: unknown; readonly latencyMs: number }): Readonly<Record<string, unknown>>;
 };

@@ -9,6 +9,7 @@ import { SupabaseApprovalStore } from '../../approval/supabase-store.js';
 import { supabaseConnectors } from '../../connectors/supabase-connectors.js';
 import type { SupabaseRest } from '../../connectors/supabase-rest.js';
 import { loadDossierContext } from '../../dossier/context.js';
+import { IN_FLIGHT_MS, inFlight, SupabaseDossierRequests, type DossierRequests } from '../../dossier/requests.js';
 import { buildDossierPrompt } from '../../dossier/prompt.js';
 import { DOSSIER_TASK } from '../../dossier/source.js';
 import { buildFactCatalog, DOSSIER_OUTPUT_SCHEMA, type CheckContext, type InvoiceView } from '../../domain/index.js';
@@ -34,6 +35,8 @@ export type DossierTaskDeps = {
   readonly limit?: number;
   /** Relógio da espera entre tentativas, o mesmo do laço. */
   readonly now?: () => Date;
+  /** #130 Os pedidos da gaveta: a chave com um pedido em andamento fica para a geração sob demanda. */
+  readonly requests?: DossierRequests;
 };
 
 /**
@@ -73,6 +76,24 @@ export function parseDossierOutput(raw: unknown): DossierOutput | null {
   return { summary: r.summary, divergences, supplier_history: r.supplier_history };
 }
 
+/** #130 O motivo do erro na língua da gaveta: formato, prazo ou o resto (`claude_failed`). */
+export type DossierFailureReason = 'claude_failed' | 'invalid_shape' | 'timeout';
+
+/** #130 Do erro da chamada ao motivo gravado em claude_suggestions.reason. */
+export function failureReason(error: unknown): DossierFailureReason {
+  if (error instanceof ClaudeError && error.kind === 'format') return 'invalid_shape';
+  if (error instanceof ClaudeError && error.kind === 'timeout') return 'timeout';
+  return 'claude_failed';
+}
+
+/** #130 As chaves com pedido da gaveta em andamento (aberto há menos de IN_FLIGHT_MS). */
+async function busyKeys(requests: DossierRequests, now: Date): Promise<Set<string>> {
+  const open = await requests.openSince(new Date(now.getTime() - IN_FLIGHT_MS));
+  const keys = new Set<string>();
+  for (const r of open) if (inFlight([r], now)) keys.add(r.input_key);
+  return keys;
+}
+
 /** #38 A tarefa sobre fontes injetadas; `dossierTask` liga ao Supabase. */
 export function dossierTaskWith(deps: DossierTaskDeps): ClaudeTask<DossierInput, DossierOutput> {
   return {
@@ -87,11 +108,16 @@ export function dossierTaskWith(deps: DossierTaskDeps): ClaudeTask<DossierInput,
     async pending(db: Db) {
       const awaiting = (await deps.listAwaiting()).filter(needsDossier);
       if (awaiting.length === 0) return { requests: [], dropped: 0 };
-      const states = await keyStates(db, DOSSIER_TASK, (deps.now ?? (() => new Date()))());
+      const now = (deps.now ?? (() => new Date()))();
+      const states = await keyStates(db, DOSSIER_TASK, now);
       // #38 As nunca tentadas primeiro, como na fila do laço; o teto vem depois, antes de ler o contexto.
       const fresh = awaiting.filter((f) => !states.has(f.invoice.accessKey));
       const retries = awaiting.filter((f) => states.get(f.invoice.accessKey) === 'retry');
-      const files = [...fresh, ...retries].slice(0, deps.limit ?? DOSSIER_LIMIT);
+      const candidates = [...fresh, ...retries];
+      // #38 AC-6 e #130: a chave que a pessoa pediu na gaveta e ainda está em geração fica de fora, para o Cron
+      // não chamar o Claude de novo e sobrescrever a linha. Uma leitura a mais, só quando há candidata.
+      const busy = candidates.length > 0 && deps.requests ? await busyKeys(deps.requests, now) : new Set<string>();
+      const files = candidates.filter((f) => !busy.has(f.invoice.accessKey)).slice(0, deps.limit ?? DOSSIER_LIMIT);
       if (files.length === 0) return { requests: [], dropped: 0 };
       // #38 Um contexto só para a rodada: o catálogo de cada nota usa as mesmas tabelas. A chave vazia não tira
       // nenhuma nota das capturadas; cada nota sai da própria lista logo abaixo.
@@ -112,6 +138,12 @@ export function dossierTaskWith(deps: DossierTaskDeps): ClaudeTask<DossierInput,
       if (!output) throw new ClaudeError('format', 'dossier: resposta do Claude fora do formato');
       return output;
     },
+
+    /** #130 A linha do evento diz que veio do evento, quanto a chamada levou e, no erro, o motivo. */
+    rowFields(outcome) {
+      const reason = 'error' in outcome ? failureReason(outcome.error) : null;
+      return { trigger: 'event', reason, latency_ms: outcome.latencyMs };
+    },
   };
 }
 
@@ -122,5 +154,6 @@ export const dossierTask = (rest: SupabaseRest): ClaudeTask<DossierInput, Dossie
   return dossierTaskWith({
     listAwaiting: () => store.listAwaiting(),
     loadContext: (key) => loadDossierContext(captureDeps, key),
+    requests: new SupabaseDossierRequests(rest),
   });
 };

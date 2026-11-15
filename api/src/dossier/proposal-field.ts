@@ -33,6 +33,25 @@ export function dossierReadFailed(): DossierFieldUnavailable {
   return { status: 'unavailable', reason: 'read_failed', notice: dossierNoticeFor('read_failed'), generatedAt: null };
 }
 
+/**
+ * #130 O dossiê pedido na gaveta e ainda em geração: a gaveta mostra Gerando e lê a proposta de novo até virar
+ * `ready` ou `unavailable`.
+ */
+export type DossierFieldGenerating = {
+  readonly status: 'generating';
+  readonly trigger: 'on_demand';
+  readonly requestedBy: string;
+  readonly requestedAt: string;
+};
+
+/** #130 O campo `dossier` da proposta, com o estado de geração sob demanda. */
+export type ProposalDossierField = DossierField | DossierFieldGenerating;
+
+/** #130 O pedido da gaveta em andamento. */
+export function dossierGenerating(requestedBy: string, requestedAt: string): DossierFieldGenerating {
+  return { status: 'generating', trigger: 'on_demand', requestedBy, requestedAt };
+}
+
 /** #128: o nome do glossário vem do catálogo da API, para a tela não traduzir código. */
 function nameOf(classification: string): { exceptionName?: string } {
   return Object.hasOwn(EXCEPTION_CATALOG, classification)

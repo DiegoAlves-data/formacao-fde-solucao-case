@@ -17,7 +17,8 @@ import { tasksFor } from './tasks/index.js';
  * (50 subrequests) o tick já passa do teto antes da rodada do Claude, e o que a rodada chama depois disso falha.
  * No plano pago o teto é 1000. A rodada do Claude vai por último para o que estourar não ser a captura.
  * Custo da rodada do Claude: 1 leitura de claude_suggestions por tarefa no laço, mais o pending() de cada uma.
- * O do dossiê: as propostas que esperam (6 leituras, 1 se não há nenhuma) e 1 leitura das próprias chaves; só
+ * O do dossiê: as propostas que esperam (6 leituras, 1 se não há nenhuma), 1 leitura das próprias chaves e, havendo
+ * candidata, 1 dos pedidos da gaveta em andamento (#130); só
  * havendo chave nova ou pronta para nova tentativa vêm o contexto (7) e até 5 × 2. Sem nada novo: 7 a 8, sem chamar
  * o Claude. Com as três tarefas cheias: as outras duas leem umas 7, o laço 3, o dossiê 7 + 7, e 3 × 5 × 2 = 54.
  */

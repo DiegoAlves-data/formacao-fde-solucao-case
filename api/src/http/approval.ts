@@ -3,12 +3,14 @@ import { approverDirectory, type ApproverDirectory } from '../approval/approvers
 import { AlreadyDecidedError, type ApprovalStore, type CaseFile } from '../approval/store.js';
 import { approve, NotAllowedToApproveError, type Decision } from '../domain/approval.js';
 import { ApprovalPolicy, type PersonLevel } from '../domain/approval-policy.js';
+import { APPROVAL_LEVELS } from '../domain/approval-level.js';
 import { DockAction, type PartialLine } from '../domain/dock-action.js';
 import { DomainError, InvalidTransitionError } from '../domain/errors.js';
-import type { Money } from '../domain/money.js';
+import { Money } from '../domain/money.js';
 import { Quantity, type Unit } from '../domain/quantity.js';
 import type { Env } from '../env.js';
 import type { Identity } from './access.js';
+import { invalidCursor, pageOf, readPageQuery, sortedBy, type Ordering } from './page.js';
 import type { CheckContext } from '../domain/index.js';
 import { dossierField, dossierReadFailed, type DossierField } from '../dossier/proposal-field.js';
 import { readDossier } from '../dossier/read-dossier.js';
@@ -63,12 +65,12 @@ export async function approvalRoutes(
   const today = deps.today ?? (() => todayInBrasilia());
 
   if (pathname === '/api/fila') {
-    return only(request, 'GET', () => queue(deps.store, identity, directory));
+    return only(request, 'GET', () => queue(deps.store, identity, directory, searchParams));
   }
   if (pathname === '/api/hoje') {
     const day = searchParams.get('dia') ?? today();
     if (!DAY.test(day)) return error(400, 'dia_invalido');
-    return only(request, 'GET', () => todayList(deps.store, day));
+    return only(request, 'GET', () => todayList(deps.store, day, searchParams));
   }
   const match = PROPOSAL_PATH.exec(pathname);
   if (!match) return null;
@@ -117,13 +119,49 @@ function summary(file: CaseFile, level: PersonLevel | null) {
   };
 }
 
-/** AC-6: quem aprova encontra a proposta na fila; `canApprove` diz se é do nível dela. */
-async function queue(store: ApprovalStore, identity: Identity, directory: ApproverDirectory): Promise<Response> {
+type QueueItem = ReturnType<typeof summary>;
+
+/**
+ * #159 A ordem da fila, a da tela: o nível mais severo primeiro (a ordem de `APPROVAL_LEVELS`, do domínio),
+ * depois o maior valor em risco, e a chave de acesso da nota para desempatar. As duas primeiras posições
+ * entram negadas para o maior vir antes. Vale na lista inteira e nas páginas.
+ */
+const QUEUE_ORDER: Ordering<QueueItem> = {
+  list: 'fila',
+  shape: ['number', 'number', 'string'],
+  key: (i) => [-APPROVAL_LEVELS.indexOf(i.level), -i.amountAtRisk.cents, i.invoiceAccessKey],
+};
+
+/**
+ * AC-6: quem aprova encontra a proposta na fila; `canApprove` diz se é do nível dela.
+ *
+ * #159 Sem `cursor` nem `limite`, `{ approver, items }` com a lista inteira. Com um deles,
+ * `{ approver, items, nextCursor, total, aggregates }`, em que `aggregates` vale para a fila inteira:
+ * `approvable` (quantas a pessoa pode aprovar), `amountAtRisk` (soma do valor em risco, `{ cents, text }`)
+ * e `blocked` (quantas no nível `bloqueio`). A quantidade aguardando é o `total`.
+ */
+async function queue(
+  store: ApprovalStore,
+  identity: Identity,
+  directory: ApproverDirectory,
+  params: URLSearchParams,
+): Promise<Response> {
+  const query = readPageQuery(params);
+  if (query.kind === 'invalid') return query.response;
   const level = directory(identity.email);
-  const files = await store.listAwaiting();
+  const approver = { email: identity.email, level };
+  const items = sortedBy((await store.listAwaiting()).map((f) => summary(f, level)), QUEUE_ORDER);
+  if (query.kind === 'whole') return Response.json({ approver, items });
+  const page = pageOf(QUEUE_ORDER, items, query);
+  if (!page) return invalidCursor();
   return Response.json({
-    approver: { email: identity.email, level },
-    items: files.map((f) => summary(f, level)),
+    approver,
+    ...page,
+    aggregates: {
+      approvable: items.filter((i) => i.canApprove).length,
+      amountAtRisk: money(Money.ofCents(items.reduce((sum, i) => sum + i.amountAtRisk.cents, 0))),
+      blocked: items.filter((i) => i.level === 'bloqueio').length,
+    },
   });
 }
 
@@ -291,20 +329,64 @@ function parsePartialLine(raw: unknown): PartialLine {
   return { sku: l.sku, quantity: Quantity.of(l.quantity.amount, unit as Unit), disposition: l.disposition };
 }
 
-/** AC-13: os títulos liberados ou reduzidos no dia; nenhum bloqueado e nenhum de nota sem decisão. */
-async function todayList(store: ApprovalStore, day: string): Promise<Response> {
+type TodayItem = {
+  invoiceAccessKey: string;
+  number: string;
+  supplierId: string;
+  amount: ReturnType<typeof money>;
+  invoiceTotal: ReturnType<typeof money>;
+  dueOn: string;
+  dockAction: string;
+  approver: string | null;
+};
+
+/**
+ * #159 A ordem da lista do dia é a chave de acesso da nota. O Supabase lia por `id` da proposta e a loja
+ * em memória, na ordem da inserção; nenhuma das duas está no item, e o cursor precisa de uma tupla que o
+ * item carregue. A chave é única e igual nos dois modos.
+ */
+const TODAY_ORDER: Ordering<TodayItem> = {
+  list: 'hoje',
+  shape: ['string'],
+  key: (i) => [i.invoiceAccessKey],
+};
+
+/**
+ * AC-13: os títulos liberados ou reduzidos no dia; nenhum bloqueado e nenhum de nota sem decisão.
+ *
+ * #159 Sem `cursor` nem `limite`, `{ day, items, total: { cents } }`, a soma em centavos como sempre. Com
+ * um deles, `{ day, items, nextCursor, total, aggregates }`: aqui `total` é a contagem dos títulos, e a
+ * soma "A pagar" vai para `aggregates.toPay` (`{ cents, text }`), junto de `approvedByRule` (quantos o
+ * aprovador foi a regra).
+ */
+async function todayList(store: ApprovalStore, day: string, params: URLSearchParams): Promise<Response> {
+  const query = readPageQuery(params);
+  if (query.kind === 'invalid') return query.response;
   const files = await store.listDecidedOn(day);
   const scheduled = files.filter((f) => f.title.state === 'na_lista_do_dia');
-  const items = scheduled.map((f) => ({
-    invoiceAccessKey: f.invoice.accessKey,
-    number: f.invoice.number,
-    supplierId: f.invoice.supplierId,
-    amount: money(f.title.amount),
-    invoiceTotal: money(f.invoice.total),
-    dueOn: f.title.dueOn,
-    dockAction: f.proposal.dockAction.kind,
-    approver: f.approval?.approver ?? null,
-  }));
-  const total = scheduled.reduce((sum, f) => sum + f.title.amount.cents, 0);
-  return Response.json({ day, items, total: { cents: total } });
+  const items = sortedBy<TodayItem>(
+    scheduled.map((f) => ({
+      invoiceAccessKey: f.invoice.accessKey,
+      number: f.invoice.number,
+      supplierId: f.invoice.supplierId,
+      amount: money(f.title.amount),
+      invoiceTotal: money(f.invoice.total),
+      dueOn: f.title.dueOn,
+      dockAction: f.proposal.dockAction.kind,
+      approver: f.approval?.approver ?? null,
+    })),
+    TODAY_ORDER,
+  );
+  const toPay = scheduled.reduce((sum, f) => sum + f.title.amount.cents, 0);
+  if (query.kind === 'whole') return Response.json({ day, items, total: { cents: toPay } });
+  const page = pageOf(TODAY_ORDER, items, query);
+  if (!page) return invalidCursor();
+  return Response.json({
+    day,
+    ...page,
+    aggregates: {
+      toPay: money(Money.ofCents(toPay)),
+      approvedByRule: items.filter((i) => i.approver === 'regra').length,
+    },
+  });
 }

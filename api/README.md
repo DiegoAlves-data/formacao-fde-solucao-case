@@ -36,6 +36,53 @@ Não se publica à mão. Cada merge na `main` que mexe em `api/` roda o workflow
 Ele também pode ser disparado pela aba Actions, mas só publica a partir da `main`. Os segredos do Worker em
 produção entram com `npx wrangler secret put <NOME>`, nunca no git.
 
+## Listas paginadas por cursor (#159)
+
+As quatro listas das telas (`GET /api/fila`, `GET /api/hoje`, `GET /api/duplicates` e `GET /api/doca`,
+mais `GET /api/recebimento-loja`, que é o mesmo handler da doca) paginam por cursor. O código está em
+`src/http/page.ts`.
+
+**Dois modos.** Sem `cursor` e sem `limite` na query, cada rota responde como antes da #159: a lista
+inteira, na forma antiga (a tela de duplicadas e as demais ainda leem assim). Com `cursor` ou `limite`,
+entra o modo paginado, que é o contrato novo.
+
+**Query.**
+
+| Parâmetro | Vale | Quando falha |
+|---|---|---|
+| `limite` | inteiro de 25 a 50; ausente (com `cursor`) é 30 | 400 `{ "error": "limite_invalido" }` |
+| `cursor` | o `nextCursor` da página anterior, como veio; ausente é a primeira página | 400 `{ "error": "cursor_invalido" }` |
+
+Por que 30: é o meio da faixa. Enche uma tela de tabela com folga, para o scroll infinito pedir a
+próxima página antes de a pessoa chegar ao fim, e a resposta cabe no Worker sem custo. O 400 traz só o
+código: nunca o valor recebido nem a causa. Os demais parâmetros de cada rota (`dia`, `destino`, `data`,
+`loja`) continuam valendo e devem ir iguais em todas as páginas.
+
+**Resposta paginada.** `items` é a página, `nextCursor` é o cursor da próxima (`null` na última),
+`total` é a quantidade da lista inteira (a mesma em todas as páginas) e `aggregates` traz o que a tela
+mostra no topo, calculado sobre a lista inteira: não muda com a página pedida. Dinheiro é `{ cents, text }`.
+Mais os campos de contexto da lista.
+
+| Lista | Contexto | `aggregates` | Os itens |
+|---|---|---|---|
+| `/api/fila` | `approver` | `approvable` (quantas a pessoa pode aprovar), `amountAtRisk` (soma do valor em risco), `blocked` (quantas no nível `bloqueio`) | os de antes, em `items` |
+| `/api/hoje` | `day` | `toPay` (a soma "A pagar"), `approvedByRule` (quantas aprovadas pela regra) | os de antes, em `items` |
+| `/api/duplicates` | nenhum | `blockedAmount` (soma do valor barrado), `byReason` (`titulo_lancado` e `ordem_sem_saldo`) | as entradas de `duplicates`, em `items` |
+| `/api/doca` | `destination`, `date`, `destinations` | `awaiting` (aguardando aprovação no destino inteiro) | as `rows`, em `items` |
+
+Atenção a `total` na lista do dia: sem cursor continua `{ "cents": ... }` (a soma); com cursor é a
+contagem, e a soma passou para `aggregates.toPay`. Na doca, `rows` vira `items`, e `awaiting` sai do topo
+e vai para `aggregates`.
+
+**Ordem.** Cada lista tem uma ordem total, a mesma nos dois modos: fila, o nível mais severo primeiro
+(`APPROVAL_LEVELS`), depois o maior valor em risco, depois a chave de acesso; hoje e duplicadas, a chave
+de acesso da nota; doca, o número da nota (como número) e a chave de acesso.
+
+**Cursor.** É opaco: base64url de um JSON versionado com a tupla de ordenação do último item entregue e o
+nome da lista. A próxima página são os itens estritamente depois dessa tupla, e não uma posição: um item
+decidido entre duas páginas não faz outro pular nem repetir. O cursor de uma lista não serve noutra. Quem
+consome trata o cursor como texto e não o monta.
+
 ## Cloudflare Access
 
 Toda rota, menos `GET /health`, exige o JWT do Cloudflare Access (#54). O Worker lê o token do

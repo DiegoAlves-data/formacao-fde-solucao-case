@@ -1,0 +1,19 @@
+<section id="nos1" class="dense" style="gap:28px">
+<p class="ov">ETAPA POR ETAPA · CAPTURA E AGENTE</p>
+<h2>Quem executa <span class="serif">cada etapa (1 de 2).</span></h2>
+<table class="tbl sm">
+<tr><th style="width:34%">Etapa</th><th style="width:16%">Quem executa</th><th style="width:50%">Por quê</th></tr>
+<tr><td>Capturar a nota</td><td>Sistema</td><td>Integração com a SEFAZ. É transporte de dado.</td></tr>
+<tr><td>Classificar a divergência</td><td>Regra + LLM</td><td>A LLM casa item sem SKU e acha a ordem. A validar.</td></tr>
+<tr><td>Duplicada?</td><td>Regra</td><td>Mesma chave, número e série. Comparação exata.</td></tr>
+<tr><td>Bloquear o título duplicado</td><td>Sistema</td><td>Consequência da regra anterior.</td></tr>
+<tr><td>Já paga fora do fluxo?</td><td>Regra</td><td>Fornecedor, data e valor batem com um pagamento.</td></tr>
+<tr><td>Vincular ao pagamento já feito</td><td>Sistema</td><td>Liga a nota ao pagamento, sem pagar de novo.</td></tr>
+<tr><td>Propor a ação na doca</td><td>Regra + LLM</td><td>A regra define a ação. A LLM escreve o dossiê.</td></tr>
+<tr><td>Definir o aprovador pelos limites</td><td>Regra</td><td>Tabela de limites. Não pode depender de interpretação.</td></tr>
+<tr><td>Quem decide?</td><td>Regra</td><td>O que bate vai pela regra. O resto vai ao aprovador.</td></tr>
+<tr><td>Conciliar contagem, nota e pedido</td><td>Regra</td><td>É conta na mesma unidade.</td></tr>
+</table>
+<div class="foot"><img src="/_blob/8f801eb20157e99cf5fb4057d35189d2" alt="Barte"><span>Mapa de agentes do processo-alvo · <span class="pg"></span></span></div>
+<aside>3 minutos. Na captura e na raia do agente, quase tudo é regra ou sistema. A LLM entra em dois lugares: para casar a descrição do item com o cadastro quando o SKU vem vazio, e para escrever o dossiê para quem aprova. Nos dois casos, a premissa ainda precisa ser validada no eval.</aside>
+</section>

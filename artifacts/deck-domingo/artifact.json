@@ -1,0 +1,37 @@
+{
+  "pages": {
+    "deck-domingo": {
+      "type": "slides",
+      "root": ".",
+      "file": "project/deck.json",
+      "title": "Domingo · da solução ao agente",
+      "files": [
+        "project/deck.css",
+        "project/slides/capa.html",
+        "project/slides/topicos.html",
+        "project/slides/tipos.html",
+        "project/slides/sistema.html",
+        "project/slides/prompt.html",
+        "project/slides/equipe.html",
+        "project/slides/modelo.html",
+        "project/slides/harness.html",
+        "project/slides/correcao.html",
+        "project/slides/gates.html",
+        "project/slides/problema.html",
+        "project/slides/bpmn.html",
+        "project/slides/processo.html",
+        "project/slides/nos1.html",
+        "project/slides/nos2.html",
+        "project/slides/solucao.html",
+        "project/slides/aprovacao.html",
+        "project/slides/proximo.html"
+      ],
+      "links": {
+        "team": "https://claude.ai/artifact/83dvhWH7u19MajbfYYCV5V"
+      },
+      "capabilities": {},
+      "publish": "manual: artefato do tipo Slides; publicar com a ferramenta Artifact, url do link acima e root nesta pasta. O logo (/_blob/8f801eb20157e99cf5fb4057d35189d2) e o BPMN (/_blob/0bc48b3802797fcaf0b519461798788c) são assets que só existem no artefato publicado."
+    }
+  },
+  "publishOrder": []
+}

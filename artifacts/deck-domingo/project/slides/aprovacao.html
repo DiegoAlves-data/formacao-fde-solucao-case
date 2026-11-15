@@ -1,0 +1,18 @@
+<section id="aprovacao" class="divider dense">
+<p class="ov">O AGENTE QUE A TURMA VAI CONSTRUIR</p>
+<h2>O agente <span class="serif">de aprovação.</span></h2>
+<div class="flow">
+<div class="step in"><div class="num">1</div><h3>Regra</h3><p class="d">A conta fecha? Decide sem modelo.</p></div>
+<x-shape kind="arrow-right" class="arrow"></x-shape>
+<div class="step in2"><div class="num">2</div><h3>Clef</h3><p class="d">Aprova com confiança de 0,98 ou mais. Abaixo disso, encaminha para uma pessoa decisora.</p></div>
+<x-shape kind="arrow-right" class="arrow"></x-shape>
+<div class="step in3"><div class="num p">3</div><h3>Pessoa</h3><p class="d">Decide, com a recomendação do Claude.</p></div>
+</div>
+<div class="callout in3" style="background:#FFFEFB"><p class="small"><b>Nunca chega ao Clef:</b> nota duplicada, fornecedor bloqueado, nota acima de R$ 100.000 e pedido de alteração.</p></div>
+<p class="small">Ele aprova a proposta antes da doca, e aprova de novo com a contagem, depois.</p>
+<div class="foot"><img src="/_blob/8f801eb20157e99cf5fb4057d35189d2" alt="Barte"><span>Arquitetura de solução · <span class="pg"></span></span></div>
+<aside>3 minutos. Este é o agente que a turma vai construir.
+Primeiro a regra: se a conta fecha, a decisão sai sem modelo nenhum. Se não fecha, entra o Clef: ele aprova quando a confiança é de 0,98 ou mais. Abaixo disso, encaminha para uma pessoa decisora, que decide com a recomendação do Claude.
+Alguns casos nunca chegam ao Clef: nota duplicada, fornecedor bloqueado, nota acima de R$ 100.000 e pedido de alteração. Esses vão direto para a pessoa.
+O agente roda duas vezes: antes da doca, com os documentos, e depois, com a contagem.</aside>
+</section>

@@ -1,0 +1,83 @@
+:root{
+  --cream:#FAF8F4; --stone:#F1EDE6; --blush:#F7E9EC;
+  --ink:#1A1918; --body:#4F4C47; --faint:#76726B;
+  --pink:#C81F50; --line:#E3DED5; --paper:#FFFEFB;
+}
+body{font-family:'IBM Plex Sans', Arial, sans-serif; color:var(--body); font-size:28px}
+section{counter-increment:page; background:var(--cream); padding:128px 128px 160px; display:flex; flex-direction:column; justify-content:center; gap:40px; box-sizing:border-box}
+section.stone{background:var(--stone)}
+section.divider{background:var(--blush); justify-content:center; gap:28px}
+
+h1{font-family:'IBM Plex Sans', Arial, sans-serif; font-weight:400; font-size:120px; line-height:1.04; letter-spacing:-4px; color:var(--ink)}
+h2{font-family:'IBM Plex Sans', Arial, sans-serif; font-weight:400; font-size:80px; line-height:1.1; letter-spacing:-2px; color:var(--ink); max-width:1600px}
+h3{font-family:'IBM Plex Sans', Arial, sans-serif; font-weight:500; font-size:40px; line-height:1.2; color:var(--ink)}
+.serif{font-family:'Instrument Serif', Georgia, serif; font-style:italic; color:var(--pink); letter-spacing:0}
+.ov{font-size:26px; font-weight:500; letter-spacing:2px; color:var(--pink)}
+.lead{font-size:40px; line-height:1.4; color:var(--body); max-width:1500px}
+.small{font-size:30px; line-height:1.45; color:var(--body)}
+
+.row{display:flex; gap:28px}
+.cols3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:28px}
+.cols4{display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:24px}
+.cols2{display:grid; grid-template-columns:1fr 1fr; gap:56px; align-items:start}
+.card{background:var(--paper); border:1px solid var(--line); border-radius:22px; padding:28px 30px; display:flex; flex-direction:column; gap:10px}
+.card.hot{border:2px solid var(--pink)}
+.card .k{font-size:26px; font-weight:500; letter-spacing:1px; color:var(--faint)}
+.card .kp{font-size:26px; font-weight:500; letter-spacing:1px; color:var(--pink)}
+.card .d{font-size:30px; line-height:1.4; color:var(--body)}
+.tile{background:var(--paper); border:1px solid var(--line); border-radius:18px; padding:20px 22px; display:flex; flex-direction:column; gap:6px}
+.tile h3{font-size:28px}
+.tile .d{font-size:24px; line-height:1.3; color:var(--body)}
+.tile .e{font-size:24px; line-height:1.3; color:var(--faint)}
+
+.flow{display:flex; align-items:stretch; gap:16px}
+.step{flex:1; background:var(--paper); border:1px solid var(--line); border-radius:20px; padding:26px 24px; display:flex; flex-direction:column; gap:12px}
+.num{width:56px; height:56px; border-radius:28px; background:var(--ink); color:var(--cream); font-size:28px; font-weight:500; display:flex; align-items:center; justify-content:center}
+.num.p{background:var(--pink)}
+.step h3{font-size:36px}
+.step .d{font-size:30px; line-height:1.4; color:var(--body)}
+.arrow{width:28px; height:20px; align-self:center; background:var(--faint)}
+
+.tbl{width:100%; font-size:26px; color:var(--body)}
+.tbl.sm{font-size:24px}
+.box{background:var(--paper); border:1px solid var(--line); border-radius:22px; padding:16px 26px}
+.callout{background:var(--blush); border-radius:22px; padding:26px 34px}
+.code{font-family:'Courier New', monospace; font-size:26px; line-height:1.55; color:var(--ink)}
+.quote{font-family:'Instrument Serif', Georgia, serif; font-style:italic; font-size:56px; line-height:1.25; color:var(--ink)}
+
+ol.steps{font-size:28px; line-height:1.4; color:var(--body); display:flex; flex-direction:column; gap:14px; padding-left:44px}
+.pill{background:var(--paper); border:1px solid var(--line); border-radius:999px; padding:14px 28px; font-size:30px; color:var(--ink)}
+.tag{background:var(--blush); border-radius:999px; padding:8px 20px; font-size:24px; font-weight:500; color:var(--pink)}
+
+.foot{position:absolute; left:128px; bottom:64px; width:1664px; height:32px; display:flex; justify-content:space-between; align-items:center; font-size:24px; color:var(--faint)}
+.foot img{width:130px; height:30px; object-fit:contain}
+.pg::after{content:counter(page)}
+.blob{position:absolute; border-radius:256px; opacity:.55}
+
+.wrap{display:flex; flex-wrap:wrap; gap:12px}
+.cluster{background:var(--paper); border:1px solid var(--line); border-radius:22px; padding:24px 28px; display:flex; flex-direction:column; gap:16px}
+.chip{background:var(--stone); border-radius:999px; padding:10px 24px; font-size:28px; color:var(--ink)}
+.chip.hot{background:var(--blush); color:var(--pink)}
+.mono{font-family:'Courier New', monospace; font-size:30px; line-height:1.45; color:var(--ink)}
+.big{font-family:'Instrument Serif', Georgia, serif; font-size:240px; line-height:1; color:var(--pink)}
+.barrow{display:flex; align-items:center; gap:24px}
+.barlabel{width:340px; font-size:36px; color:var(--ink)}
+.bar{height:72px; border-radius:12px; background:var(--ink)}
+.barval{font-size:40px; font-weight:500; color:var(--ink)}
+.dark-card{background:var(--ink); border-radius:22px; padding:28px 30px; display:flex; flex-direction:column; gap:10px}
+.dark-card h3{color:var(--cream)}
+.dark-card .d{font-size:30px; line-height:1.4; color:#D8D3CA}
+.down{width:28px; height:44px; align-self:center; background:var(--faint)}
+
+/* slides densos: mesma escala, um passo menor */
+.dense h2{font-size:64px}
+.dense h3{font-size:34px}
+.dense .d, .dense .dark-card .d{font-size:26px}
+.dense .small{font-size:26px}
+.dense .chip{font-size:24px}
+.dense .mono{font-size:26px}
+
+@keyframes rise{from{opacity:0; transform:translateY(24px)}to{opacity:1; transform:translateY(0)}}
+.in{animation:rise 600ms ease-out both}
+.in2{animation:rise 600ms ease-out 150ms both}
+.in3{animation:rise 600ms ease-out 300ms both}

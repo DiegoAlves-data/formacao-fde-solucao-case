@@ -1,16 +1,17 @@
 // #63 API da fila de aprovação, da proposta, de aprovar e alterar, e da lista do dia.
 import { exceptionFields } from '../domain/exception-catalog.js';
 import { approverDirectory, type ApproverDirectory } from '../approval/approvers.js';
-import { AlreadyDecidedError, type ApprovalStore, type CaseFile } from '../approval/store.js';
+import { AlreadyDecidedError, type ApprovalStore, type CaseFile, type StoredAudit } from '../approval/store.js';
 import { approve, isEngineApproval, NotAllowedToApproveError, type Approval, type Decision } from '../domain/approval.js';
 import { ApprovalPolicy, type PersonLevel } from '../domain/approval-policy.js';
 import { DockAction, type PartialLine } from '../domain/dock-action.js';
 import { DomainError, InvalidTransitionError } from '../domain/errors.js';
-import type { Money } from '../domain/money.js';
+import { Money } from '../domain/money.js';
 import { Quantity, type Unit } from '../domain/quantity.js';
 import type { Env } from '../env.js';
 import type { Identity } from './access.js';
 import type { CheckContext, Invoice, Product } from '../domain/index.js';
+import type { AuditedField } from '../domain/invoice-audit.js';
 import { dossierField, dossierReadFailed, type DossierField } from '../dossier/proposal-field.js';
 import { readDossier } from '../dossier/read-dossier.js';
 import type { DossierSource } from '../dossier/source.js';
@@ -181,6 +182,7 @@ async function proposalDetail(
     dossier: dossierView,
     timeline: await proposalTimeline(key, file, timeline),
     engine: await proposalEngine(key, file, engine),
+    audit: auditView(file.audit ?? null),
   });
 }
 
@@ -200,6 +202,29 @@ async function proposalEngine(key: string, file: CaseFile, engine?: ApprovalDeps
     console.error(`#41 motor da nota ${key} não lido: ${e instanceof Error ? e.name : 'erro'}`);
     return null;
   }
+}
+
+/** #230 Na resposta, o campo que difere usa o camelCase das demais chaves; no banco e no domínio segue em snake_case. */
+const responseField = (field: AuditedField): string => (field === 'dock_action' ? 'dockAction' : field);
+
+/** #230 AC-7 A auditoria da nota na resposta: null (pendente), "não auditada" com o motivo, ou a auditada com a concordância. */
+function auditView(audit: StoredAudit | null) {
+  if (audit === null) return null;
+  if (audit.status === 'nao_auditada') return { status: audit.status, reason: audit.reason, refusals: audit.refusals };
+  return {
+    status: audit.status,
+    classification: audit.classification,
+    dockAction: { kind: audit.dockAction },
+    routing: audit.routing,
+    justification: audit.justification,
+    amountAtRisk: audit.amountAtRiskCents === null ? null : money(Money.ofCents(audit.amountAtRiskCents)),
+    model: audit.model,
+    auditedAt: audit.auditedAt,
+    agreement: audit.differs.length === 0 ? { agrees: true } : { agrees: false, differs: audit.differs.map(responseField) },
+    raisedLevel: audit.raisedLevel,
+    injectionFlag: audit.injectionFlag,
+    refusals: audit.refusals,
+  };
 }
 
 /** #211 AC-4 Um erro ao ler os horários não derruba a proposta: a linha do tempo vai vazia. */

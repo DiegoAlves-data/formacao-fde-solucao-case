@@ -4,18 +4,19 @@
  * pelo `defer` (cron/tick.ts) — sem laço de tarefas, sem `pending()` relendo o estado da tabela.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { ClaudeError, type Ask } from '../../src/claude/client.js';
+import { ClaudeError, type AskWithUsage, type Usage } from '../../src/claude/client.js';
 import { restDb } from '../../src/claude/db.js';
 import { SupabaseRest } from '../../src/connectors/supabase-rest.js';
 import { generateOnEvent } from '../../src/dossier/event.js';
 import { readDossier } from '../../src/dossier/read-dossier.js';
 import { SupabaseDossierSource } from '../../src/dossier/source.js';
 import { busyKeys } from '../../src/dossier/event.js';
-import { SupabaseDossierRequests } from '../../src/dossier/requests.js';
+import { SupabaseDossierRequests, type DossierRequests } from '../../src/dossier/requests.js';
 import { FakePostgrest } from '../support/fake-postgrest.js';
 import { KIT_ACCESS_KEY, kitCase, kitGoodRaw } from './kit-case.js';
 
-const answering = (output: unknown) => vi.fn(async () => output) as unknown as Ask & ReturnType<typeof vi.fn>;
+const answering = (output: unknown, usage: Usage | null = null) =>
+  vi.fn(async () => ({ value: output, usage })) as unknown as AskWithUsage & ReturnType<typeof vi.fn>;
 
 async function setup(suggestions: Record<string, unknown>[] = []) {
   const { invoice, ctx, tables } = await kitCase();
@@ -30,8 +31,8 @@ async function setup(suggestions: Record<string, unknown>[] = []) {
       loadContext: async () => ctx,
       source: new SupabaseDossierSource(rest),
     });
-  const run = (ask: Ask) => generateOnEvent({ db, ask, context }, invoice);
   const requests = new SupabaseDossierRequests(rest);
+  const run = (askWithUsage: AskWithUsage) => generateOnEvent({ db, askWithUsage, context, requests }, invoice);
   return { invoice, ctx, fake, db, context, run, gaveta, requests };
 }
 
@@ -90,14 +91,14 @@ describe('#38 do evento à gaveta, sem rodada agendada', () => {
 
   it('AC-5 a falha do Claude grava o erro, e a gaveta mostra o dossiê indisponível', async () => {
     const { run, gaveta, fake } = await setup();
-    await run(vi.fn(async () => { throw new Error('caiu'); }) as unknown as Ask);
+    await run(vi.fn(async () => { throw new Error('caiu'); }) as unknown as AskWithUsage);
     expect(sugestoes(fake)[0]).toMatchObject({ status: 'error', output: null, trigger: 'event', reason: 'claude_failed' });
     expect(await gaveta()).toMatchObject({ status: 'unavailable', reason: 'claude_failed' });
   });
 
   it('AC-5 o prazo vencido vira o motivo timeout', async () => {
     const { run, fake } = await setup();
-    await run(vi.fn(async () => { throw new ClaudeError('timeout', 'sem resposta'); }) as unknown as Ask);
+    await run(vi.fn(async () => { throw new ClaudeError('timeout', 'sem resposta'); }) as unknown as AskWithUsage);
     expect(sugestoes(fake)[0]).toMatchObject({ status: 'error', trigger: 'event', reason: 'timeout' });
   });
 
@@ -110,14 +111,14 @@ describe('#38 do evento à gaveta, sem rodada agendada', () => {
   });
 
   it('sem credencial (sem `ask`) não grava linha e não lança: a próxima rodada tenta de novo (auth é global)', async () => {
-    const { fake, db, context, invoice } = await setup();
-    await expect(generateOnEvent({ db, context }, invoice)).resolves.toBeUndefined();
+    const { fake, db, context, invoice, requests } = await setup();
+    await expect(generateOnEvent({ db, askWithUsage: undefined, context, requests }, invoice)).resolves.toBeUndefined();
     expect(sugestoes(fake)).toHaveLength(0);
   });
 
   it('limite de uso (429) não grava linha: a próxima rodada tenta de novo, como o laço (ClaudeError.isGlobal)', async () => {
     const { run, fake, gaveta } = await setup();
-    await run(vi.fn(async () => { throw new ClaudeError('rate_limit', 'HTTP 429'); }) as unknown as Ask);
+    await run(vi.fn(async () => { throw new ClaudeError('rate_limit', 'HTTP 429'); }) as unknown as AskWithUsage);
     expect(sugestoes(fake)).toHaveLength(0);
     expect(await gaveta()).toBeNull();
     await run(answering(kitGoodRaw()));
@@ -126,7 +127,7 @@ describe('#38 do evento à gaveta, sem rodada agendada', () => {
 
   it('credencial recusada (401) também não grava linha', async () => {
     const { run, fake } = await setup();
-    await run(vi.fn(async () => { throw new ClaudeError('auth', 'HTTP 401'); }) as unknown as Ask);
+    await run(vi.fn(async () => { throw new ClaudeError('auth', 'HTTP 401'); }) as unknown as AskWithUsage);
     expect(sugestoes(fake)).toHaveLength(0);
   });
 
@@ -171,9 +172,9 @@ describe('#38 do evento à gaveta, sem rodada agendada', () => {
   });
 
   it('nota com pedido da gaveta em andamento (busy) não é chamada pelo evento', async () => {
-    const { invoice, db, context } = await setup();
+    const { invoice, db, context, requests } = await setup();
     const ask = answering(kitGoodRaw());
-    await generateOnEvent({ db, ask, context, busy: new Set([KIT_ACCESS_KEY]) }, invoice);
+    await generateOnEvent({ db, askWithUsage: ask, context, requests, busy: new Set([KIT_ACCESS_KEY]) }, invoice);
     expect(ask).not.toHaveBeenCalled();
   });
 
@@ -190,7 +191,47 @@ describe('#38 do evento à gaveta, sem rodada agendada', () => {
       select: vi.fn(async () => []),
       upsert: vi.fn(async () => { throw new Error('banco fora do ar'); }),
     };
-    await expect(generateOnEvent({ db, ask: answering(kitGoodRaw()), context: async () => ctx }, invoice)).resolves.toBeUndefined();
+    const requests = {
+      open: vi.fn(async () => 1),
+      finish: vi.fn(async () => {}),
+      since: vi.fn(async () => []),
+      openSince: vi.fn(async () => []),
+    } satisfies DossierRequests;
+    await expect(
+      generateOnEvent({ db, askWithUsage: answering(kitGoodRaw()), context: async () => ctx, requests }, invoice),
+    ).resolves.toBeUndefined();
+    // O pedido aberto fecha mesmo com a escrita final falhando.
+    expect(requests.finish).toHaveBeenCalledWith(1, expect.any(Date));
+  });
+});
+
+describe('#38 o uso de tokens gravado na linha do dossiê do evento', () => {
+  it('ok: grava input_tokens e output_tokens da resposta', async () => {
+    const { run, fake } = await setup();
+    await run(answering(kitGoodRaw(), { input_tokens: 1200, output_tokens: 340 }));
+    expect(sugestoes(fake)[0]).toMatchObject({ status: 'ok', trigger: 'event', usage: { input_tokens: 1200, output_tokens: 340 } });
+  });
+
+  it('resposta fora do formato: grava o erro e o uso já gasto', async () => {
+    const { run, fake } = await setup();
+    await run(answering({ summary: 'x' }, { input_tokens: 900, output_tokens: 15 }));
+    expect(sugestoes(fake)[0]).toMatchObject({ status: 'error', reason: 'invalid_shape', usage: { input_tokens: 900, output_tokens: 15 } });
+  });
+
+  it('falha do cliente depois de alguma resposta (o erro traz o uso): grava esse uso', async () => {
+    const { run, fake } = await setup();
+    const error = new ClaudeError('format', 'sem resposta final em 6 voltas');
+    error.usage = { input_tokens: 3000, output_tokens: 200 };
+    await run(vi.fn(async () => { throw error; }) as unknown as AskWithUsage);
+    expect(sugestoes(fake)[0]).toMatchObject({ status: 'error', usage: { input_tokens: 3000, output_tokens: 200 } });
+  });
+
+  it('falha antes de qualquer resposta (prazo): usage nulo', async () => {
+    const { run, fake } = await setup();
+    await run(vi.fn(async () => { throw new ClaudeError('timeout', 'sem resposta'); }) as unknown as AskWithUsage);
+    const [row] = sugestoes(fake);
+    expect(row).toMatchObject({ status: 'error', reason: 'timeout' });
+    expect(row?.usage).toBeNull();
   });
 });
 
@@ -200,9 +241,9 @@ describe('#130 #38 AC-1 o evento abre o pedido que a gaveta lê como Gerando', (
     let during: unknown[] = [];
     const ask = vi.fn(async () => {
       during = (fake.tables.get('dossier_requests') ?? []).map((r) => ({ ...r }));
-      return kitGoodRaw();
-    }) as unknown as Ask;
-    await generateOnEvent({ db, ask, context, requests }, invoice);
+      return { value: kitGoodRaw(), usage: null };
+    }) as unknown as AskWithUsage;
+    await generateOnEvent({ db, askWithUsage: ask, context, requests }, invoice);
     expect(during).toEqual([expect.objectContaining({ input_key: KIT_ACCESS_KEY, requested_by: 'claude', trigger: 'event', finished_at: null })]);
     const after = fake.tables.get('dossier_requests') ?? [];
     expect(after).toHaveLength(1);
@@ -213,8 +254,8 @@ describe('#130 #38 AC-1 o evento abre o pedido que a gaveta lê como Gerando', (
     const { invoice, db, context, requests, fake } = await setup();
     const ask = vi.fn(async () => {
       throw new ClaudeError('timeout', 'prazo');
-    }) as unknown as Ask;
-    await generateOnEvent({ db, ask, context, requests, log: () => {} }, invoice);
+    }) as unknown as AskWithUsage;
+    await generateOnEvent({ db, askWithUsage: ask, context, requests, log: () => {} }, invoice);
     expect((fake.tables.get('dossier_requests') ?? [])[0]?.finished_at).not.toBeNull();
   });
 
@@ -225,7 +266,7 @@ describe('#130 #38 AC-1 o evento abre o pedido que a gaveta lê como Gerando', (
     const busy = await busyKeys(requests, now);
     expect(busy.has(KIT_ACCESS_KEY)).toBe(true);
     const ask = answering(kitGoodRaw());
-    await generateOnEvent({ db, ask, context, requests, busy }, invoice);
+    await generateOnEvent({ db, askWithUsage: ask, context, requests, busy }, invoice);
     expect(ask).not.toHaveBeenCalled();
     expect(fake.tables.get('dossier_requests')).toHaveLength(1);
   });
@@ -235,10 +276,43 @@ describe('#130 o fim fecha só o próprio pedido', () => {
   it('o fim do evento não fecha um pedido da gaveta aberto para a mesma nota', async () => {
     const { invoice, db, context, requests, fake } = await setup();
     const drawerId = await requests.open({ input_key: KIT_ACCESS_KEY, requested_by: 'ana@exemplo.com', requested_at: new Date().toISOString(), trigger: 'on_demand' });
-    await generateOnEvent({ db, ask: answering(kitGoodRaw()), context, requests }, invoice);
+    await generateOnEvent({ db, askWithUsage: answering(kitGoodRaw()), context, requests }, invoice);
     const rows = fake.tables.get('dossier_requests') ?? [];
     expect(rows).toHaveLength(2);
     expect(rows.find((r) => r.id === drawerId)?.finished_at).toBeNull();
     expect(rows.find((r) => r.id !== drawerId)?.finished_at).not.toBeNull();
+  });
+});
+
+describe('#38 #130 duas propostas no mesmo disparo: cada linha com o próprio uso e o próprio pedido', () => {
+  it('cada claude_suggestions guarda o uso da sua resposta, e o evento abre e fecha um pedido por nota', async () => {
+    const { invoice, db, context, requests, fake } = await setup();
+    // Outra nota, com o resto da NF-004 como está (o protótipo leva itens e divergências).
+    const otherKey = `${KIT_ACCESS_KEY.slice(0, -1)}9`;
+    const other = Object.assign(Object.create(invoice) as typeof invoice, { accessKey: otherKey });
+    const usageOf: Record<string, Usage> = {
+      [KIT_ACCESS_KEY]: { input_tokens: 1200, output_tokens: 340 },
+      [otherKey]: { input_tokens: 800, output_tokens: 95 },
+    };
+    const opened: unknown[] = [];
+    for (const nota of [invoice, other]) {
+      const ask = vi.fn(async () => {
+        opened.push(...(fake.tables.get('dossier_requests') ?? []).filter((r) => r.input_key === nota.accessKey).map((r) => ({ ...r })));
+        return { value: kitGoodRaw(), usage: usageOf[nota.accessKey] };
+      }) as unknown as AskWithUsage;
+      await generateOnEvent({ db, askWithUsage: ask, context, requests }, nota);
+    }
+    const rows = sugestoes(fake);
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.input_key === KIT_ACCESS_KEY)).toMatchObject({ status: 'ok', trigger: 'event', usage: usageOf[KIT_ACCESS_KEY] });
+    expect(rows.find((r) => r.input_key === otherKey)).toMatchObject({ status: 'ok', trigger: 'event', usage: usageOf[otherKey] });
+    // Durante cada chamada, o pedido do evento da própria nota estava aberto.
+    expect(opened).toEqual([
+      expect.objectContaining({ input_key: KIT_ACCESS_KEY, requested_by: 'claude', trigger: 'event', finished_at: null }),
+      expect.objectContaining({ input_key: otherKey, requested_by: 'claude', trigger: 'event', finished_at: null }),
+    ]);
+    const reqs = fake.tables.get('dossier_requests') ?? [];
+    expect(reqs).toHaveLength(2);
+    expect(reqs.every((r) => r.finished_at !== null)).toBe(true);
   });
 });

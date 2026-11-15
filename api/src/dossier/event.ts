@@ -2,7 +2,7 @@
 // e, no mesmo tick, as que ficaram sem dossiê por causa do teto ou de uma falha anterior (cron/tick.ts). Quem chama
 // agenda esta promise fora da resposta do Cron (defer/waitUntil). Não há rodada agendada do laço de tarefas (#66/#171).
 import { inBackoff } from '../claude/runner.js';
-import { ClaudeError, DEFAULT_MODEL, type Ask } from '../claude/client.js';
+import { ClaudeError, DEFAULT_MODEL, spentUsage, type AskWithUsage, type Usage } from '../claude/client.js';
 import type { Db } from '../claude/db.js';
 import { MAX_ATTEMPTS, storedError } from '../claude/runner.js';
 import { dossierRequest, failureReason, parseDossierOutput, type DossierInput } from '../claude/tasks/dossier.js';
@@ -18,8 +18,11 @@ export type EventDossierDeps = {
   readonly db: Db;
   /** #38 O contexto da nota, como a gaveta e o pedido sob demanda montam (#68). */
   readonly context: (invoiceAccessKey: string) => Promise<CheckContext>;
-  /** #38 Sem credencial do Claude no Worker, undefined: o disparo não acontece (ver dispatchDossiers). */
-  readonly ask?: Ask;
+  /**
+   * #38 O Claude com o uso de tokens, para a coluna `usage`. Obrigatório no tipo (sem credencial, undefined
+   * explícito): quem monta as dependências não esquece a ligação sem quebrar o tsc.
+   */
+  readonly askWithUsage: AskWithUsage | undefined;
   /** #38 Valores que nunca podem aparecer na coluna error nem no log (o token, a chave do Supabase). */
   readonly secrets?: readonly string[];
   /** #130 As chaves com pedido da gaveta ainda em andamento: o evento não chama o Claude para elas. */
@@ -27,8 +30,9 @@ export type EventDossierDeps = {
   /**
    * #130 #38 AC-1 Os pedidos do dossiê: o evento abre o seu (trigger `event`, requested_by `claude`) antes de chamar o
    * Claude e o fecha no fim, para a gaveta mostrar "Gerando" e o pedido da gaveta receber 409 enquanto isso.
+   * Obrigatório: sem ele o evento chamaria o Claude sem a linha que a gaveta e o 409 leem.
    */
-  readonly requests?: DossierRequests;
+  readonly requests: DossierRequests;
   readonly now?: () => Date;
   readonly log?: (line: string) => void;
 };
@@ -86,11 +90,11 @@ export async function generateOnEvent(deps: EventDossierDeps, invoice: InvoiceVi
     }
 
     // #130 #38 AC-1 A linha aberta é o que a gaveta lê como "Gerando"; fecha no finally, com sucesso ou não.
-    const requestId = await deps.requests?.open({ input_key: key, requested_by: 'claude', requested_at: clock().toISOString(), trigger: 'event' });
+    const requestId = await deps.requests.open({ input_key: key, requested_by: 'claude', requested_at: clock().toISOString(), trigger: 'event' });
     try {
       await callAndStore(deps, invoice, prev, clock, log);
     } finally {
-      if (requestId !== undefined) await deps.requests?.finish(requestId, clock());
+      await deps.requests.finish(requestId, clock());
     }
   } catch (error) {
     log(`#38 dossiê do evento da nota ${key} não gravado: ${storedError(error, deps.secrets)}`);
@@ -110,13 +114,18 @@ async function callAndStore(
     const started = clock().getTime();
     let input: DossierInput | Record<string, never> = {};
     let result: { ok: true; output: unknown } | { ok: false; error: unknown };
+    let usage: Usage | null = null;
     try {
-      if (!deps.ask) throw new ClaudeError('auth', 'sem credencial do Claude no Worker');
+      if (!deps.askWithUsage) throw new ClaudeError('auth', 'sem credencial do Claude no Worker');
       input = dossierRequest(invoice, await deps.context(key));
-      const output = parseDossierOutput(await deps.ask<unknown>(input));
+      const answered = await deps.askWithUsage<unknown>(input);
+      usage = answered.usage;
+      const output = parseDossierOutput(answered.value);
       if (!output) throw new ClaudeError('format', 'dossier: resposta do Claude fora do formato');
       result = { ok: true, output };
     } catch (error) {
+      // #38 A falha depois de alguma resposta traz o uso já gasto; antes de qualquer resposta, nulo.
+      usage ??= spentUsage(error);
       result = { ok: false, error };
     }
     if (!result.ok && result.error instanceof ClaudeError && result.error.isGlobal) {
@@ -146,6 +155,7 @@ async function callAndStore(
           updated_at: clock().toISOString(),
           trigger: 'event',
           latency_ms: latencyMs,
+          usage,
           ...fields,
         },
       ],

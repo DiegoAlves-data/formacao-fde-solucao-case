@@ -271,3 +271,30 @@ describe('"sem X" muda o produto', () => {
     expect(matchByDescription('Iogurte natural sem lactose 170g', ['Iogurte natural sem lactose 170 g'])).toBe(0);
   });
 });
+
+describe('abreviação só com ponto ou da tabela fechada (#66)', () => {
+  it('AC-3: sabores que começam igual não casam nem confirmam', () => {
+    expect(matchByDescription('Suco lima 1L', ['Suco limão 1L'])).toBeNull();
+    expect(matchByDescription('Polpa manga 1kg', ['Polpa mangaba 1kg'])).toBeNull();
+    expect(confirmsDescriptionMatch('Suco lima 1L', 'Suco limão 1L')).toBe(false);
+    expect(confirmsDescriptionMatch('Polpa manga 1kg', 'Polpa mangaba 1kg')).toBe(false);
+    expect(confirmsDescriptionMatch('Suco maca 1L', 'Suco macarrao 1L')).toBe(false);
+  });
+
+  it('AC-2: "refri" sem ponto continua confirmando pela tabela fechada', () => {
+    expect(confirmsDescriptionMatch('Refri cola 2L garrafa pet', 'Refrigerante cola 2 L')).toBe(true);
+  });
+
+  it('AC-2: abreviação com ponto casa com a palavra que começa por ela', () => {
+    expect(matchByDescription('Biscoito recheado choc. 140g', ['Biscoito recheado chocolate 140g'])).toBe(0);
+    expect(matchByDescription('Arroz parb. 5kg', ['Arroz 5 kg', 'Arroz parboilizado 5 kg'])).toBe(1);
+  });
+
+  it('AC-3: a mesma abreviação sem ponto e fora da tabela não casa', () => {
+    expect(matchByDescription('Arroz parb 5kg', ['Arroz parboilizado 5 kg'])).toBeNull();
+  });
+
+  it('AC-2: o ponto decimal da medida não vira abreviação', () => {
+    expect(matchByDescription('Refrigerante cola 1.5 L', ['Refrigerante cola 1500 ml'])).toBe(0);
+  });
+});

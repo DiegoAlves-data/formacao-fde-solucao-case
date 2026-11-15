@@ -7,7 +7,10 @@
  * (`withDescriptionMatches`), e as sugestões ficam num cache que a verificação só lê.
  */
 
-/** Porta para quem sugere o casamento (o Claude, em produção). Devolve o índice do candidato ou null. */
+/**
+ * Porta para quem sugere o casamento: em produção, as sugestões gravadas pelo job claude-enrich (#66).
+ * Devolve o índice do candidato ou null.
+ */
 export interface DescriptionSuggester {
   suggest(description: string, candidates: readonly string[]): Promise<number | null>;
 }
@@ -115,8 +118,18 @@ const VARIANT_WORDS = new Set([
   'original',
 ]);
 
-/** #66: abreviação mínima que conta como a mesma palavra (refri ~ refrigerante). */
-const MIN_PREFIX = 4;
+/**
+ * #66: tabela fechada das abreviações comuns escritas sem ponto. Fora dela, uma abreviação só
+ * vale com ponto ("parb."); sem isso, lima casaria com limão e manga com mangaba.
+ */
+const ABBREVIATIONS: Readonly<Record<string, string>> = {
+  refri: 'refrigerante',
+  choc: 'chocolate',
+  bisc: 'biscoito',
+  cx: 'caixa',
+  pct: 'pacote',
+  gf: 'garrafa',
+};
 const MEASURE = /(\d+(?:\.\d+)?)\s*(kg|mg|ml|g|l|un|cx)(?![a-z0-9])/g;
 const TO_BASE: Record<string, { factor: number; unit: string }> = {
   kg: { factor: 1000, unit: 'g' },
@@ -133,6 +146,8 @@ interface Normalized {
   measures: Set<string>;
   /** #66: as palavras que vêm depois de "sem" ("sem açúcar" guarda "acucar"); mudam o produto. */
   without: Set<string>;
+  /** #66: as palavras escritas com ponto no texto ("parb."), que casam com a palavra que começa por elas. */
+  abbreviated: Set<string>;
 }
 
 function normalize(text: string): Normalized {
@@ -153,13 +168,21 @@ function normalize(text: string): Normalized {
     return ' ';
   });
 
-  const tokens = s.split(/[^a-z0-9]+/).filter((t) => t !== '' && !STOPWORDS.has(t));
+  const tokens: string[] = [];
+  const abbreviated = new Set<string>();
+  for (const [, raw, dot] of s.matchAll(/([a-z0-9]+)(\.)?/g)) {
+    if (raw === undefined || STOPWORDS.has(raw)) continue;
+    const token = ABBREVIATIONS[raw] ?? raw;
+    tokens.push(token);
+    // #66: o ponto só marca abreviação depois de letra; o ponto decimal fica entre dígitos.
+    if (dot !== undefined && token === raw && /[a-z]$/.test(raw)) abbreviated.add(raw);
+  }
   const without = new Set<string>();
   tokens.forEach((token, i) => {
     const next = tokens[i + 1];
     if (token === 'sem' && next !== undefined) without.add(next);
   });
-  return { words: new Set(tokens), measures, without };
+  return { words: new Set(tokens), measures, without, abbreviated };
 }
 
 function sameMeasures(a: Normalized, b: Normalized): boolean {
@@ -179,11 +202,10 @@ function sameWithout(a: Normalized, b: Normalized): boolean {
   return true;
 }
 
-/** #66: a mesma palavra, ou uma abreviação de 4 letras ou mais que é prefixo da outra. */
-function sameWord(a: string, b: string): boolean {
+/** #66: a mesma palavra, ou uma abreviação escrita com ponto que é prefixo da outra. */
+function sameWord(a: string, b: string, aAbbreviated: Set<string>, bAbbreviated: Set<string>): boolean {
   if (a === b) return true;
-  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
-  return short.length >= MIN_PREFIX && long.startsWith(short);
+  return (aAbbreviated.has(a) && b.startsWith(a)) || (bAbbreviated.has(b) && a.startsWith(b));
 }
 
 interface WordComparison {
@@ -193,7 +215,9 @@ interface WordComparison {
 }
 
 /** #66: pareia as palavras um a um, a igual primeiro e depois a abreviada. */
-function compareWords(a: Set<string>, b: Set<string>): WordComparison {
+function compareWords(x: Normalized, y: Normalized): WordComparison {
+  const a = x.words;
+  const b = y.words;
   const free = new Set(b);
   const unmatched: string[] = [];
   let common = 0;
@@ -202,7 +226,7 @@ function compareWords(a: Set<string>, b: Set<string>): WordComparison {
     else unmatched.push(w);
   }
   for (const w of unmatched) {
-    const partner = [...free].find((other) => sameWord(w, other));
+    const partner = [...free].find((other) => sameWord(w, other, x.abbreviated, y.abbreviated));
     if (partner === undefined) continue;
     free.delete(partner);
     common++;
@@ -223,7 +247,7 @@ function sameVariants(a: Normalized, b: Normalized): boolean {
 function ruleScore(description: Normalized, candidate: Normalized): number | null {
   if (!sameMeasures(description, candidate) || !sameWithout(description, candidate)) return null;
   if (!sameVariants(description, candidate)) return null;
-  const { common, onlyA, onlyB } = compareWords(description.words, candidate.words);
+  const { common, onlyA, onlyB } = compareWords(description, candidate);
   if (onlyA > 0 && onlyB > 0) return null;
   const union = common + onlyA + onlyB;
   return union === 0 ? 0 : common / union;

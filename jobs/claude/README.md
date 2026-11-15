@@ -84,3 +84,10 @@ positivos nos negativos e falhas do Claude.
 
 Para rodar: aba Actions, workflow **Enriquece com o Claude**, **Run workflow** com `eval` marcado.
 Local, com o token no ambiente: `npm run eval:description-match`.
+
+## Tarefa fora da checagem (#66)
+
+`src/tasks/probable-order.ts` (#65) ficou de fora do `tsconfig.json` e do registro. Ela importa de
+`api/src`, e esse código usa `enum`, propriedades de parâmetro e imports `.js`. O Node com
+`--experimental-strip-types` não roda nada disso. A tarefa entra quando depender só do executor, ou
+quando o executor ganhar um passo de build.

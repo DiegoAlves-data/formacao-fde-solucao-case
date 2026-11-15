@@ -73,16 +73,31 @@ describe('#38 AC-1: o tick dispara o dossiê das propostas que acabou de encamin
     expect(dossierRows(fake)).toHaveLength(0);
   });
 
-  it('AC-6: a segunda rodada não repete o dossiê das propostas da primeira, só as novas (nenhuma aqui)', async () => {
+  it('AC-6: a segunda rodada pega o lote seguinte (rede de segurança) e nunca repete uma chave', async () => {
     const fake = new FakePostgrest(kitTables());
     stubFetchWithClaude(fake);
     vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await runTick(WITH_CLAUDE, fake);
-    const afterFirst = dossierRows(fake).length;
+    expect(dossierRows(fake)).toHaveLength(DOSSIER_EVENT_LIMIT);
     await runTick(WITH_CLAUDE, fake);
 
-    // #63 A segunda rodada não propõe de novo (restrição única), então não há proposta nova para disparar.
-    expect(dossierRows(fake)).toHaveLength(afterFirst);
+    // As 5 do primeiro ciclo estão ok e não voltam; a segunda rodada cobre mais 5 das 66 que esperam.
+    const keys = dossierRows(fake).map((r) => r.input_key);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys).toHaveLength(2 * DOSSIER_EVENT_LIMIT);
+  });
+
+  it('AC-5: com o limite de uso (429) na rodada, nenhuma linha é gravada e a próxima tenta de novo', async () => {
+    const fake = new FakePostgrest(kitTables());
+    vi.stubGlobal('fetch', (input: string | URL, init?: RequestInit) =>
+      String(input).startsWith('https://api.anthropic.com/')
+        ? Promise.resolve(new Response('{}', { status: 429 }))
+        : fake.fetch(String(input), init),
+    );
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await runTick(WITH_CLAUDE, fake);
+    expect(dossierRows(fake)).toHaveLength(0);
   });
 });

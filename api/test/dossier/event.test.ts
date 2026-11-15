@@ -106,10 +106,72 @@ describe('#38 do evento à gaveta, sem rodada agendada', () => {
     expect(String(row?.error)).toMatch(/^ClaudeError:/);
   });
 
-  it('AC-5 sem credencial (sem `ask`), grava claude_failed e nunca lança', async () => {
+  it('sem credencial (sem `ask`) não grava linha e não lança: a próxima rodada tenta de novo (auth é global)', async () => {
     const { fake, db, context, invoice } = await setup();
     await expect(generateOnEvent({ db, context }, invoice)).resolves.toBeUndefined();
-    expect(sugestoes(fake)[0]).toMatchObject({ status: 'error', trigger: 'event', reason: 'claude_failed' });
+    expect(sugestoes(fake)).toHaveLength(0);
+  });
+
+  it('limite de uso (429) não grava linha: a próxima rodada tenta de novo, como o laço (ClaudeError.isGlobal)', async () => {
+    const { run, fake, gaveta } = await setup();
+    await run(vi.fn(async () => { throw new ClaudeError('rate_limit', 'HTTP 429'); }) as unknown as Ask);
+    expect(sugestoes(fake)).toHaveLength(0);
+    expect(await gaveta()).toBeNull();
+    await run(answering(kitGoodRaw()));
+    expect(sugestoes(fake)[0]).toMatchObject({ status: 'ok' });
+  });
+
+  it('credencial recusada (401) também não grava linha', async () => {
+    const { run, fake } = await setup();
+    await run(vi.fn(async () => { throw new ClaudeError('auth', 'HTTP 401'); }) as unknown as Ask);
+    expect(sugestoes(fake)).toHaveLength(0);
+  });
+
+  it('a linha de erro é refeita (merge) na retentativa, e volta a ok sem contar tentativa', async () => {
+    const erro = [
+      {
+        task: 'dossier',
+        input_key: KIT_ACCESS_KEY,
+        input: {},
+        output: null,
+        status: 'error',
+        error: 'ClaudeError: claude: HTTP 500',
+        attempts: 1,
+        model: 'claude-haiku',
+        updated_at: '2026-01-01T00:00:00.000Z',
+        trigger: 'event',
+      },
+    ];
+    const { run, fake } = await setup(erro);
+    const ask = answering(kitGoodRaw());
+    await run(ask);
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(sugestoes(fake)).toHaveLength(1);
+    expect(sugestoes(fake)[0]).toMatchObject({ status: 'ok', attempts: 0 });
+  });
+
+  it('erro esgotado (3 tentativas) não é tentado de novo', async () => {
+    const esgotada = [{ task: 'dossier', input_key: KIT_ACCESS_KEY, input: {}, output: null, status: 'error', error: 'x', attempts: 3, model: 'claude-haiku', updated_at: '2026-01-01T00:00:00.000Z' }];
+    const { run } = await setup(esgotada);
+    const ask = answering(kitGoodRaw());
+    await run(ask);
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  it('erro ainda dentro da espera do backoff não é tentado de novo', async () => {
+    const agora = new Date().toISOString();
+    const naEspera = [{ task: 'dossier', input_key: KIT_ACCESS_KEY, input: {}, output: null, status: 'error', error: 'x', attempts: 1, model: 'claude-haiku', updated_at: agora }];
+    const { run } = await setup(naEspera);
+    const ask = answering(kitGoodRaw());
+    await run(ask);
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  it('nota com pedido da gaveta em andamento (busy) não é chamada pelo evento', async () => {
+    const { invoice, db, context } = await setup();
+    const ask = answering(kitGoodRaw());
+    await generateOnEvent({ db, ask, context, busy: new Set([KIT_ACCESS_KEY]) }, invoice);
+    expect(ask).not.toHaveBeenCalled();
   });
 
   it('AC-4 o dossiê não toca na proposta', async () => {

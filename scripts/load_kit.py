@@ -67,7 +67,7 @@ def read_json(data_dir: str, name: str) -> Json:
 
 
 def load_contract(data_dir: str = DATA_DIR) -> Json:
-    return read_json(data_dir, "contrato.json")
+    return read_json(data_dir, "contract.json")
 
 
 def file_records(table: Json, source: Json) -> list[Row]:

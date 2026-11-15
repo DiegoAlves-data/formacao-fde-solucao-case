@@ -10,7 +10,7 @@ on:
       - data/kit/**
       - scripts/load_kit.py
       - scripts/kit_online_test.py
-      - .github/workflows/supabase-base-do-kit.yml
+      - .github/workflows/supabase-kit-base.yml
   workflow_dispatch:
 
 permissions:
@@ -18,11 +18,11 @@ permissions:
 
 # Dois merges seguidos não aplicam migrações ao mesmo tempo: o segundo espera o primeiro (#52).
 concurrency:
-  group: supabase-base-do-kit
+  group: supabase-kit-base
   cancel-in-progress: false
 
 jobs:
-  aplicar:
+  apply:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

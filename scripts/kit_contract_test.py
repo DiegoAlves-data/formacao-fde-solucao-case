@@ -1,6 +1,6 @@
 """Teste do contrato de dados da base do kit (offline, #52).
 
-Lê data/kit/contrato.json e a migração supabase/migrations/*_base_do_kit.sql e confere que cada
+Lê data/kit/contract.json e a migração supabase/migrations/*_kit_base.sql e confere que cada
 tabela do contrato existe com exatamente as suas colunas, tipos, chave primária, chaves
 estrangeiras, únicas e checks, com RLS ligado e nenhuma política.
 """
@@ -17,7 +17,7 @@ ColumnSpec = tuple[str, bool]
 ForeignKey = tuple[tuple[str, ...], str, tuple[str, ...]]
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONTRACT = os.path.join(ROOT, "data", "kit", "contrato.json")
+CONTRACT = os.path.join(ROOT, "data", "kit", "contract.json")
 MIGRATIONS = os.path.join(ROOT, "supabase", "migrations")
 
 
@@ -40,9 +40,9 @@ def load_contract() -> Json:
 
 
 def load_sql() -> str:
-    files = sorted(glob.glob(os.path.join(MIGRATIONS, "*_base_do_kit.sql")))
+    files = sorted(glob.glob(os.path.join(MIGRATIONS, "*_kit_base.sql")))
     if not files:
-        raise AssertionError("migração *_base_do_kit.sql ausente em supabase/migrations/")
+        raise AssertionError("migração *_kit_base.sql ausente em supabase/migrations/")
     with open(files[0], encoding="utf-8") as f:
         sql = f.read()
     return re.sub(r"--[^\n]*", "", sql)
@@ -173,7 +173,7 @@ class ContractTest(unittest.TestCase):
         self.assertNotRegex(self.sql, re.compile(r"create\s+policy", re.I))
 
     def test_kit_declarations_carry_the_decision_pointer(self) -> None:
-        with open(glob.glob(os.path.join(MIGRATIONS, "*_base_do_kit.sql"))[0], encoding="utf-8") as f:
+        with open(glob.glob(os.path.join(MIGRATIONS, "*_kit_base.sql"))[0], encoding="utf-8") as f:
             lines = f.read().splitlines()
         inside = False
         for number, line in enumerate(lines, 1):

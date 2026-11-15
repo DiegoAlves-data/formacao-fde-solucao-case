@@ -14,7 +14,7 @@ As tabelas `kit_*` e as colunas copiadas das chaves do kit mantêm o nome da fon
 ## Consequences
 
 - Quem lê a tabela encontra o mesmo nome do JSON, do glossário e do conector do #53; o carregador copia as chaves sem mapeamento.
-- Renomear uma tabela ou coluna é mudança incompatível do contrato (`data/kit/contrato.json`) e entra como migração nova.
+- Renomear uma tabela ou coluna é mudança incompatível do contrato (`data/kit/contract.json`) e entra como migração nova.
 - Os detectores de linguagem dos bastidores não cobram os nomes marcados com `ADR-001`; os demais seguem em inglês.
 
 ## Alternatives considered

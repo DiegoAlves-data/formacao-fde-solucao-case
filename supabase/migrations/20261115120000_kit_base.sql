@@ -1,4 +1,4 @@
--- Base do kit: tabelas que espelham os JSON de data/kit/ (ver data/kit/contrato.json, #52).
+-- Base do kit: tabelas que espelham os JSON de data/kit/ (ver data/kit/contract.json, #52).
 -- RLS ligado em toda tabela e nenhuma política: só o Worker lê, com a chave secreta (#52).
 
 -- ERP (cadastro): fornecedores.json (#52)

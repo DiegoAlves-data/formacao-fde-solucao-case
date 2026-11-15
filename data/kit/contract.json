@@ -1,5 +1,5 @@
 {
- "contract": "base_do_kit",
+ "contract": "kit_base",
  "version": "1.0.0",
  "schema": "public",
  "table_prefix": "kit_",

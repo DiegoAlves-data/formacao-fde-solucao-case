@@ -7,7 +7,7 @@ import type { Env } from '../env.js';
 /**
  * #56 As tabelas do domínio, com uma coluna `not null` de cada uma: o PostgREST exige filtro para
  * apagar, e `not.is.null` pega todas. A nota vai primeiro: o `on delete cascade` leva divergências,
- * propostas, aprovações e títulos no mesmo comando, e uma rodada do Cron no meio não deixa filha
+ * propostas, aprovações, auditorias (a tabela só recebe linhas, sem DELETE; sai só pelo cascade) e títulos no mesmo comando, e uma rodada do Cron no meio não deixa filha
  * órfã. As caixas de saída não têm chave para a nota e vão logo depois; as filhas ficam na lista
  * para o caso de uma linha sem nota.
  */

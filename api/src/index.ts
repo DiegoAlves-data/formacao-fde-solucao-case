@@ -15,6 +15,7 @@ import { restDb } from "./claude/db";
 import { SupabaseTimelineSource } from "./automation/readers";
 import { appStoreActionOutbox } from "./connectors/store-action";
 import { wmsDockActionOutbox } from "./connectors/wms-dock-action";
+import { SupabaseEngineStore } from "./engine/supabase-store";
 
 export interface Worker {
   fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response>;
@@ -52,6 +53,8 @@ function approvalDeps(env: Env) {
     // #176 A unidade de estoque do receber parcial vem do fator de caixa do cadastro.
     products: () => captureDeps.registry.listProducts(),
     timeline: new SupabaseTimelineSource(rest, new SupabaseDossierSource(rest)),
+    // #41 AC-4 A decisão do motor em modo sombra, ao lado da pessoa.
+    engine: new SupabaseEngineStore(rest),
     dossier: {
       source: new SupabaseDossierSource(rest),
       context: (key: string) => loadDossierContext(captureDeps, key),

@@ -116,6 +116,10 @@ export class FakePostgrest {
     if (table === 'titles') return { state: 'lancado', updated_at: now };
     // #130 dossier_requests.id é identidade: o open() lê o id da linha devolvida.
     if (table === 'dossier_requests') return { id: this.nextId++ };
+    // #41 engine_decisions: a hora da decisão, o papel da linha e as tentativas têm default na migração.
+    if (table === 'engine_decisions') {
+      return { id: this.nextId++, role: 'cascade', decided_at: now, similar_cases: [], delegation_id: null, attempts: 1, last_attempt_at: now };
+    }
     return {};
   }
 
@@ -137,6 +141,16 @@ export class FakePostgrest {
       // #130 is.null: o pedido do dossiê ainda aberto.
       if (expr === 'is.null') {
         if (row[col] !== null && row[col] !== undefined) return false;
+        continue;
+      }
+      // #41 and=(col.lt."v"): o limite de cima de um período, quando a coluna já tem outro filtro.
+      if (col === 'and') {
+        const inner = /^\((.*)\)$/.exec(expr)?.[1] ?? '';
+        for (const part of inner.split(',')) {
+          const m = /^([a-z_]+)\.lt\."?([^"]*)"?$/.exec(part);
+          if (!m) throw new Error(`fake: filtro and não suportado ${part}`);
+          if (!(Date.parse(String(row[m[1] ?? ''])) < Date.parse(m[2] ?? ''))) return false;
+        }
         continue;
       }
       if (expr.startsWith('gte.')) {

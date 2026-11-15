@@ -21,6 +21,7 @@ import { tasksFor } from './tasks/index.js';
  * candidata, 1 dos pedidos da gaveta em andamento (#130); só
  * havendo chave nova ou pronta para nova tentativa vêm o contexto (7) e até 5 × 2. Sem nada novo: 7 a 8, sem chamar
  * o Claude. Com as três tarefas cheias: as outras duas leem umas 7, o laço 3, o dossiê 7 + 7, e 3 × 5 × 2 = 54.
+ * #230 O auditor (invoice-audit, `maxPerRun` 1) soma 22 no pior caso; a conta está em tasks/invoice-audit.ts.
  */
 export const CRON_LIMIT = 5;
 
@@ -47,6 +48,7 @@ export async function runClaudeRound(
     result = await runTasks({
       db: restDb(rest),
       ask: client.ask,
+      converse: (options) => client.converse(options),
       tasks: tasksFor(rest),
       log: (line) => log(`cron: ${line}`),
       limit: CRON_LIMIT,

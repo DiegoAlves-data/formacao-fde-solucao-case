@@ -1,16 +1,17 @@
 // #63 API da fila de aprovação, da proposta, de aprovar e alterar, e da lista do dia.
 import { exceptionFields } from '../domain/exception-catalog.js';
 import { approverDirectory, type ApproverDirectory } from '../approval/approvers.js';
-import { AlreadyDecidedError, type ApprovalStore, type CaseFile } from '../approval/store.js';
-import { approve, NotAllowedToApproveError, type Decision } from '../domain/approval.js';
+import { AlreadyDecidedError, type ApprovalStore, type CaseFile, type StoredAudit } from '../approval/store.js';
+import { approve, isEngineApproval, NotAllowedToApproveError, type Approval, type Decision } from '../domain/approval.js';
 import { ApprovalPolicy, type PersonLevel } from '../domain/approval-policy.js';
 import { DockAction, type PartialLine } from '../domain/dock-action.js';
 import { DomainError, InvalidTransitionError } from '../domain/errors.js';
-import type { Money } from '../domain/money.js';
+import { Money } from '../domain/money.js';
 import { Quantity, type Unit } from '../domain/quantity.js';
 import type { Env } from '../env.js';
 import type { Identity } from './access.js';
 import type { CheckContext, Invoice, Product } from '../domain/index.js';
+import type { AuditedField } from '../domain/invoice-audit.js';
 import {
   dossierField,
   dossierGenerating,
@@ -36,6 +37,8 @@ import { publishApprovedStoreAction } from '../dock/publish-approved-store-actio
 import { buildTimeline } from '../automation/timeline.js';
 import type { TimelineSource } from '../automation/readers.js';
 import { receivingPlace } from '../dock/receiving-place.js';
+import { engineView, type EngineView } from '../engine/agreement.js';
+import type { EngineReader } from '../engine/store.js';
 
 export interface ApprovalDeps {
   store: ApprovalStore;
@@ -54,6 +57,8 @@ export interface ApprovalDeps {
   storeOutbox?: StoreActionOutbox;
   /** #211 Os horários da linha do tempo da nota. Sem ele, `timeline` vai vazia. */
   timeline?: TimelineSource;
+  /** #41 AC-4 As decisões do motor da nota. Sem ele, `engine` vai nulo. */
+  engine?: Pick<EngineReader, 'forProposal'>;
 }
 
 /** #68: a fonte do dossiê e o contexto da nota, para conferir os números contra o banco. */
@@ -112,7 +117,11 @@ export async function approvalRoutes(
   }
   const action = match[2];
   if (action === 'dossie') return only(request, 'POST', () => requestDossier(deps, key, identity, defer));
-  if (!action) return only(request, 'GET', () => proposalDetail(deps.store, key, identity, directory, deps.dossier, deps.products, deps.timeline));
+  if (!action) {
+    return only(request, 'GET', () =>
+      proposalDetail(deps.store, key, identity, directory, deps.dossier, deps.products, deps.timeline, deps.engine),
+    );
+  }
   return only(request, 'POST', () => decide(request, deps, key, action, identity, directory, today()));
 }
 
@@ -170,6 +179,7 @@ async function proposalDetail(
   dossier?: DossierDeps,
   products?: ApprovalDeps['products'],
   timeline?: TimelineSource,
+  engine?: ApprovalDeps['engine'],
 ): Promise<Response> {
   const file = await store.find(key);
   if (!file) return error(404, 'not_found');
@@ -197,7 +207,50 @@ async function proposalDetail(
     approval: file.approval,
     dossier: dossierView,
     timeline: await proposalTimeline(key, file, timeline),
+    engine: await proposalEngine(key, file, engine),
+    audit: auditView(file.audit ?? null),
   });
+}
+
+/**
+ * #41 AC-4 O motor ao lado da pessoa: a decisão da cascata em modo sombra, a medição do Clef e, quando a pessoa
+ * já decidiu, se concordou. Sem decisão do motor, nulo; um erro ao ler também, sem derrubar a proposta.
+ * #42 AC-2 A decisão do modo delegado vem primeiro, quando existe: é ela que leva a proposta à pessoa com a
+ * recomendação do motor e o porquê (`below_confidence`). Sem ela, a do modo sombra, como antes.
+ */
+async function proposalEngine(key: string, file: CaseFile, engine?: ApprovalDeps['engine']): Promise<EngineView | null> {
+  if (!engine) return null;
+  try {
+    const delegated = engineView(await engine.forProposal(key, 'delegated'), file.proposal.state);
+    if (delegated) return delegated;
+    return engineView(await engine.forProposal(key, 'shadow'), file.proposal.state);
+  } catch (e) {
+    console.error(`#41 motor da nota ${key} não lido: ${e instanceof Error ? e.name : 'erro'}`);
+    return null;
+  }
+}
+
+/** #230 Na resposta, o campo que difere usa o camelCase das demais chaves; no banco e no domínio segue em snake_case. */
+const responseField = (field: AuditedField): string => (field === 'dock_action' ? 'dockAction' : field);
+
+/** #230 AC-7 A auditoria da nota na resposta: null (pendente), "não auditada" com o motivo, ou a auditada com a concordância. */
+function auditView(audit: StoredAudit | null) {
+  if (audit === null) return null;
+  if (audit.status === 'nao_auditada') return { status: audit.status, reason: audit.reason, refusals: audit.refusals };
+  return {
+    status: audit.status,
+    classification: audit.classification,
+    dockAction: { kind: audit.dockAction },
+    routing: audit.routing,
+    justification: audit.justification,
+    amountAtRisk: audit.amountAtRiskCents === null ? null : money(Money.ofCents(audit.amountAtRiskCents)),
+    model: audit.model,
+    auditedAt: audit.auditedAt,
+    agreement: audit.differs.length === 0 ? { agrees: true } : { agrees: false, differs: audit.differs.map(responseField) },
+    raisedLevel: audit.raisedLevel,
+    injectionFlag: audit.injectionFlag,
+    refusals: audit.refusals,
+  };
 }
 
 /** #211 AC-4 Um erro ao ler os horários não derruba a proposta: a linha do tempo vai vazia. */
@@ -425,6 +478,13 @@ function parsePartialLine(raw: unknown): PartialLine {
   return { sku: l.sku, quantity: Quantity.of(l.quantity.amount, unit as Unit), disposition: l.disposition };
 }
 
+/** #42 AC-4 Quem aprovou, no vocabulário de `approvals.approved_by`. */
+function approvedByOf(approval: Approval | null): 'rule' | 'engine' | 'person' | null {
+  if (!approval) return null;
+  if (approval.approverLevel === 'regra') return 'rule';
+  return isEngineApproval(approval) ? 'engine' : 'person';
+}
+
 /** AC-13: os títulos liberados ou reduzidos no dia; nenhum bloqueado e nenhum de nota sem decisão. */
 async function todayList(store: ApprovalStore, day: string): Promise<Response> {
   const files = await store.listDecidedOn(day);
@@ -439,6 +499,9 @@ async function todayList(store: ApprovalStore, day: string): Promise<Response> {
     ...exceptionFields(f.proposal.classification),
     dockAction: f.proposal.dockAction.kind,
     approver: f.approval?.approver ?? null,
+    // #42 AC-4 Quem aprovou, como a coluna gerada `approvals.approved_by`: a régua, o motor ("Aprovado pelo motor")
+    // ou a pessoa.
+    approvedBy: approvedByOf(f.approval),
   }));
   const total = scheduled.reduce((sum, f) => sum + f.title.amount.cents, 0);
   return Response.json({ day, items, total: { cents: total } });

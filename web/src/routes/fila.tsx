@@ -4,6 +4,7 @@ import { InlineEmpty, SegmentedFilter, Stat, StatGrid, StatusBadge } from "@bart
 import { approvalApi, type ProposalDetailDto, type QueueDto, type QueueItemDto } from "../api/approval";
 import { ProposalPanel } from "../approval/ProposalPanel";
 import { ACTION_LABEL, ACTION_TONE, LEVEL_LABEL, LEVEL_TONE, byQueueOrder } from "../approval/labels";
+import { InvoiceCell } from "../components/InvoiceCell";
 import { EmptyState } from "../components/EmptyState";
 import { Screen } from "../components/Screen";
 import { useLoad } from "../components/useLoad";
@@ -70,14 +71,18 @@ export default function FilaDeAprovacao(_props: RouteProps) {
               { key: "nota", title: texts.fila.columns.invoice, dataIndex: "number", render: (_, i) =>
                   dim(
                     i,
-                    <>
-                      {i.canApprove ? null : (
-                        <span role="img" aria-label={texts.fila.noPermission}>
-                          🔒{" "}
-                        </span>
-                      )}
-                      {`NF ${i.number} · ${i.supplierId}`}
-                    </>,
+                    <InvoiceCell
+                      number={i.number}
+                      issuedOn={i.issuedOn}
+                      bottom={i.supplierId}
+                      prefix={
+                        i.canApprove ? null : (
+                          <span role="img" aria-label={texts.fila.noPermission}>
+                            🔒{" "}
+                          </span>
+                        )
+                      }
+                    />,
                   ),
               },
               {

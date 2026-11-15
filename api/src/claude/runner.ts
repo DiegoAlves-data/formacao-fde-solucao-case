@@ -15,7 +15,7 @@ export const MAX_PER_RUN = 50;
 /** #66 Depois de 3 tentativas com erro, a chave não é mais tentada pelo laço. */
 export const MAX_ATTEMPTS = 3;
 /** #66 Espera entre tentativas com erro: 5 min * 2^tentativas desde updated_at. */
-const BACKOFF_BASE_MS = 5 * 60_000;
+export const BACKOFF_BASE_MS = 5 * 60_000;
 const MAX_ERROR = 200;
 
 export type RunOptions = {
@@ -75,7 +75,7 @@ async function existingSuggestions(db: Db, task: string): Promise<Existing> {
   return { byKey: new Map(valid.map((row) => [row.input_key, row])), dropped };
 }
 
-function inBackoff(row: StoredSuggestion, now: Date): boolean {
+export function inBackoff(row: { readonly attempts: number; readonly updated_at: string }, now: Date): boolean {
   return now.getTime() < Date.parse(row.updated_at) + BACKOFF_BASE_MS * 2 ** row.attempts;
 }
 

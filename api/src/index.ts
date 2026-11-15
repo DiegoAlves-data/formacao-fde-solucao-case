@@ -9,8 +9,8 @@ export function createWorker(deps: RouterDeps) {
     async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
       return route(request, env, deps);
     },
-    async scheduled(controller: ScheduledController, _env: Env, _ctx: ExecutionContext): Promise<void> {
-      tick(controller);
+    async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+      await tick(controller, env);
     },
   } satisfies ExportedHandler<Env>;
 }

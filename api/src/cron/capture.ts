@@ -28,6 +28,8 @@ export type CaptureResult = {
   readonly inserted: number;
   /** #59 Notas conferidas nesta rodada. */
   readonly checked: number;
+  /** #56 Notas que quebraram na conferência e ficaram a conferir, marcadas com o motivo. */
+  readonly failed: number;
 };
 
 /** #59 Idempotente: a segunda rodada sobre a mesma SEFAZ não grava nem confere nada de novo. */
@@ -41,9 +43,9 @@ export async function captureInvoices(deps: CaptureDeps): Promise<CaptureResult>
     const { checked, failures } = checkEach(toCheck, ctx);
     await deps.invoices.saveChecked(checked, (deps.now ?? (() => new Date()))().toISOString());
     await deps.invoices.markCheckFailed(failures);
-    return { seen: issued.length, inserted: inserted.length, checked: checked.length };
+    return { seen: issued.length, inserted: inserted.length, checked: checked.length, failed: failures.length };
   }
-  return { seen: issued.length, inserted: inserted.length, checked: 0 };
+  return { seen: issued.length, inserted: inserted.length, checked: 0, failed: 0 };
 }
 
 /** #56 Confere nota a nota: a que quebra fica de fora, com o motivo, e não derruba as outras. */

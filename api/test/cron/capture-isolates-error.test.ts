@@ -12,8 +12,8 @@ const BROKEN_SUFFIX = '74374841';
 
 const withBrokenIssueDate = () => {
   const tables = kitTables();
-  const nota = tables.kit_notas!.find((n) => String(n.chave).endsWith(BROKEN_SUFFIX))!;
-  nota.data_emissao = '09/11/2026';
+  const kitInvoice = tables.kit_notas!.find((n) => String(n.chave).endsWith(BROKEN_SUFFIX))!;
+  kitInvoice.data_emissao = '09/11/2026';
   return tables;
 };
 
@@ -32,7 +32,7 @@ describe('#56 o Cron isola o erro por nota', () => {
 
     const result = await run(fake);
 
-    expect(result).toEqual({ seen: 80, inserted: 80, checked: 79 });
+    expect(result).toEqual({ seen: 80, inserted: 80, checked: 79, failed: 1 });
     expect(broken(fake)).toMatchObject({ state: 'a_conferir', checked_at: null });
     expect(String(broken(fake).check_error)).toContain('09/11/2026');
     const others = (fake.rows('invoices') as Row[]).filter((r) => r !== broken(fake));
@@ -42,14 +42,14 @@ describe('#56 o Cron isola o erro por nota', () => {
   it('corrigida a data, a rodada seguinte confere a nota e limpa o motivo', async () => {
     const fake = new FakePostgrest(withBrokenIssueDate());
     await run(fake);
-    const nota = fake.rows('kit_notas').find((n) => String(n.chave).endsWith(BROKEN_SUFFIX))!;
-    nota.data_emissao = '2026-11-09';
+    const kitInvoice = fake.rows('kit_notas').find((n) => String(n.chave).endsWith(BROKEN_SUFFIX))!;
+    kitInvoice.data_emissao = '2026-11-09';
     const invoice = broken(fake);
     invoice.issued_on = '2026-11-09';
 
     const result = await run(fake);
 
-    expect(result).toEqual({ seen: 80, inserted: 0, checked: 1 });
+    expect(result).toEqual({ seen: 80, inserted: 0, checked: 1, failed: 0 });
     expect(broken(fake)).toMatchObject({ state: 'conferida', classification: 'E7', check_error: null });
   });
 });

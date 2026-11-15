@@ -17,7 +17,7 @@ describe('#56 data do pagamento no conector do banco', () => {
     expect(payments).toHaveLength(9);
   });
 
-  for (const bad of ['02/11/2026', '2026-11-31', '2026-2-1', '']) {
+  for (const bad of ['02/11/2026', '2026-11-31', '2026-11-32', '2026-13-01', '2026-2-1', '']) {
     it(`recusa a data ${JSON.stringify(bad)}`, async () => {
       const [first, ...rest] = kitTables().kit_pagamentos!;
       await expect(bankOver([{ ...first, data: bad }, ...rest]).listPayments()).rejects.toBeInstanceOf(SupabaseRestError);

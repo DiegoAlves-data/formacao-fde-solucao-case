@@ -126,7 +126,7 @@ describe.skipIf(!ONLINE)('#59 online, no Supabase real', () => {
     const first = await captureInvoices(connectors.captureDeps);
     const second = await captureInvoices(connectors.captureDeps);
     console.log(`  AC-5 online: 1ª ${JSON.stringify(first)} 2ª ${JSON.stringify(second)}`);
-    expect(second).toEqual({ seen: 80, inserted: 0, checked: 0 });
+    expect(second).toEqual({ seen: 80, inserted: 0, checked: 0, failed: 0 });
     const keys = parseRows(await rest.select('invoices', { select: 'access_key,state' }), isInvoiceStateRow, 'invoices');
     expect(keys).toHaveLength(80);
     expect(new Set(keys.map((k) => k.access_key)).size).toBe(80);

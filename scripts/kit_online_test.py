@@ -44,6 +44,19 @@ def chave_publica():
     return None
 
 
+def ler_com_chave(chave, tabela):
+    """Lê a tabela com a chave dada. Devolve (status, corpo); erro HTTP devolve corpo vazio."""
+    cab = {"apikey": chave}
+    if not chave.startswith("sb_"):
+        cab["Authorization"] = "Bearer " + chave
+    req = urllib.request.Request(ck.url_rest(URL) + tabela + "?select=*", headers=cab)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, json.load(r)
+    except urllib.error.HTTPError as e:
+        return e.code, []
+
+
 @unittest.skipUnless(TEM_CREDENCIAL, "sem BARTE_ACADEMY_SUPABASE_URL/_SECRET_KEY: teste online pulado")
 class BaseDoKitOnlineTest(unittest.TestCase):
     @classmethod
@@ -87,15 +100,7 @@ class BaseDoKitOnlineTest(unittest.TestCase):
         for t in self.contrato["tabelas"]:
             with self.subTest(tabela=t["nome"]):
                 self.assertGreater(self.cliente.contar(t["nome"]), 0, "tabela vazia não prova RLS")
-                req = urllib.request.Request(
-                    ck.url_rest(URL) + t["nome"] + "?select=*",
-                    headers={"apikey": publica, "Authorization": "Bearer " + publica}
-                    if not publica.startswith("sb_") else {"apikey": publica})
-                try:
-                    with urllib.request.urlopen(req, timeout=30) as r:
-                        status, corpo = r.status, json.load(r)
-                except urllib.error.HTTPError as e:
-                    status, corpo = e.code, []
+                status, corpo = ler_com_chave(publica, t["nome"])
                 print(f"  AC-3 {t['nome']}: HTTP {status}, {len(corpo)} linhas")
                 self.assertIn(status, (200, 401, 403))
                 self.assertEqual([], corpo)

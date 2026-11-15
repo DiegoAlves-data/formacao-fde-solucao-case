@@ -90,5 +90,11 @@ class TransformacaoTest(unittest.TestCase):
         self.assertEqual(sum((Decimal(str(o["valor_total"])) for o in arquivo("ordens.json")), Decimal(0)), soma)
 
 
+class SerializacaoTest(unittest.TestCase):
+    def test_decimal_vai_como_texto_sem_perder_precisao(self):
+        corpo = ck._serializar([{"valor": Decimal("12345678901.23")}])
+        self.assertEqual([{"valor": "12345678901.23"}], json.loads(corpo))
+
+
 if __name__ == "__main__":
     unittest.main()

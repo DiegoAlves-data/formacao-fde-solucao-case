@@ -58,6 +58,13 @@ def contagem_esperada(tabela, dados=DADOS):
     return len(registros)
 
 
+def linhas_de_itens(t, registros, colunas):
+    """Uma linha por item de cada pai; o que o item não tem vem do pai."""
+    campo = t["contagem"]["campo"]
+    return [{c: item[c] if c in item else pai.get(c) for c in colunas}
+            for pai in registros for item in pai[campo]]
+
+
 def montar_linhas(dados=DADOS):
     """Devolve {tabela: [linha, ...]} na ordem do contrato (pais antes dos filhos)."""
     contrato = carregar_contrato(dados)
@@ -68,9 +75,7 @@ def montar_linhas(dados=DADOS):
         registros = registros_do_arquivo(t, fonte)
         linhas[t["nome"]] = []
         if t["contagem"]["regra"] == "itens":
-            for pai in registros:
-                for item in pai[t["contagem"]["campo"]]:
-                    linhas[t["nome"]].append({c: item[c] if c in item else pai.get(c) for c in colunas})
+            linhas[t["nome"]] = linhas_de_itens(t, registros, colunas)
         elif t["nome"] == "kit_regua":
             linhas[t["nome"]].append({c: 1 if c == "id" else fonte[c] for c in colunas})
         else:
@@ -84,11 +89,11 @@ def somar(linhas, coluna):
 
 
 def _serializar(linhas):
-    # Decimal vira número JSON sem passar por float.
+    # Decimal vai como texto JSON, sem passar por float; o PostgREST converte para numeric.
     class Codificador(json.JSONEncoder):
         def default(self, o):
             if isinstance(o, Decimal):
-                return float(o)
+                return str(o)
             return super().default(o)
     return json.dumps(linhas, cls=Codificador, ensure_ascii=False).encode("utf-8")
 
@@ -100,30 +105,30 @@ class Supabase:
         self.base = url_rest(url)
         self.chave = chave
 
-    def _pedir(self, metodo, tabela, consulta="", corpo=None, extra=None):
+    def _pedir(self, metodo, caminho, corpo=None, extra=None):
         cab = {"apikey": self.chave, "Content-Type": "application/json"}
         if not self.chave.startswith("sb_"):
             cab["Authorization"] = "Bearer " + self.chave
         cab.update(extra or {})
-        req = urllib.request.Request(self.base + tabela + consulta, data=corpo, method=metodo, headers=cab)
+        req = urllib.request.Request(self.base + caminho, data=corpo, method=metodo, headers=cab)
         try:
             with urllib.request.urlopen(req, timeout=60) as r:
                 return r.status, dict(r.headers), r.read()
         except urllib.error.HTTPError as e:
             return e.code, dict(e.headers), e.read()
         except urllib.error.URLError as e:
-            raise ErroDeCarga(f"{tabela}: falha de rede ({type(e.reason).__name__})") from None
+            raise ErroDeCarga(f"{caminho.split('?')[0]}: falha de rede ({type(e.reason).__name__})") from None
 
     def gravar(self, tabela, linhas, pk):
         consulta = "?on_conflict=" + urllib.parse.quote(",".join(pk))
         extra = {"Prefer": "resolution=merge-duplicates,return=minimal"}
         for i in range(0, len(linhas), LOTE):
-            status, _, _ = self._pedir("POST", tabela, consulta, _serializar(linhas[i:i + LOTE]), extra)
+            status, _, _ = self._pedir("POST", tabela + consulta, _serializar(linhas[i:i + LOTE]), extra)
             if status >= 300:
                 raise ErroDeCarga(f"{tabela}: HTTP {status} ao gravar")
 
     def contar(self, tabela):
-        status, cab, _ = self._pedir("GET", tabela, "?select=*", None,
+        status, cab, _ = self._pedir("GET", tabela + "?select=*", None,
                                      {"Prefer": "count=exact", "Range": "0-0", "Range-Unit": "items"})
         if status >= 300:
             raise ErroDeCarga(f"{tabela}: HTTP {status} ao contar")
@@ -134,7 +139,7 @@ class Supabase:
         valores, inicio = [], 0
         while True:
             status, _, corpo = self._pedir(
-                "GET", tabela, f"?select={coluna}&order={coluna}", None,
+                "GET", f"{tabela}?select={coluna}&order={coluna}", None,
                 {"Range": f"{inicio}-{inicio + 999}", "Range-Unit": "items"})
             if status >= 300:
                 raise ErroDeCarga(f"{tabela}: HTTP {status} ao ler")

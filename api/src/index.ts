@@ -10,8 +10,13 @@ import { loadDossierContext } from "./dossier/context";
 import { SupabaseDossierSource } from "./dossier/source";
 import { wmsDockActionOutbox } from "./connectors/wms-dock-action";
 
+export interface Worker {
+  fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response>;
+  scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void>;
+}
+
 /** Monta o Worker com as dependências dadas. Os testes injetam um verificador sem rede (#54). */
-export function createWorker(deps: RouterDeps) {
+export function createWorker(deps: RouterDeps): Worker {
   return {
     async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
       return route(request, env, deps);

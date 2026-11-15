@@ -4,14 +4,14 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { MemoryApprovalStore, type CaseFile } from '../../src/approval/store.js';
-import { ASK_TIMEOUT_MS, ClaudeError, type Ask, type FetchFn } from '../../src/claude/client.js';
+import { ASK_TIMEOUT_MS, ClaudeError, type AskWithUsage, type FetchFn } from '../../src/claude/client.js';
 import { restDb } from '../../src/claude/db.js';
 import { needsDossier } from '../../src/claude/tasks/dossier.js';
 import { SupabaseRest } from '../../src/connectors/supabase-rest.js';
 import { draftProposal, propose } from '../../src/domain/approval.js';
 import { ApprovalPolicy } from '../../src/domain/approval-policy.js';
 import { Title, type Invoice } from '../../src/domain/index.js';
-import { ON_DEMAND_ASK_TIMEOUT_MS, onDemandAsk } from '../../src/dossier/on-demand.js';
+import { ON_DEMAND_ASK_TIMEOUT_MS, onDemandAskWithUsage } from '../../src/dossier/on-demand.js';
 import { SupabaseDossierRequests } from '../../src/dossier/requests.js';
 import { SupabaseDossierSource } from '../../src/dossier/source.js';
 import type { Env } from '../../src/env.js';
@@ -41,9 +41,9 @@ function caseFile(invoice: Invoice): CaseFile {
   return { invoice, proposal, title, route, approval, supplierBlocked: false };
 }
 
-const answering = (output: unknown) => vi.fn(async () => output) as unknown as Ask & ReturnType<typeof vi.fn>;
+const answering = (output: unknown) => vi.fn(async () => ({ value: output, usage: null })) as unknown as AskWithUsage & ReturnType<typeof vi.fn>;
 
-type Setup = { ask?: Ask; suggestions?: Record<string, unknown>[]; requests?: Record<string, unknown>[]; now?: () => Date };
+type Setup = { ask?: AskWithUsage; suggestions?: Record<string, unknown>[]; requests?: Record<string, unknown>[]; now?: () => Date };
 
 async function setup(options: Setup = {}) {
   const { invoice, ctx, tables } = await kitCase();
@@ -66,7 +66,7 @@ async function setup(options: Setup = {}) {
         source: new SupabaseDossierSource(rest),
         context,
         requests: new SupabaseDossierRequests(rest),
-        onDemand: { db: restDb(rest), ...(options.ask ? { ask: options.ask } : {}), secrets: ['sk-segredo'], log: () => {} },
+        onDemand: { db: restDb(rest), askWithUsage: options.ask, secrets: ['sk-segredo'], log: () => {} },
         now,
       },
     },
@@ -190,7 +190,7 @@ describe('#130 POST /api/propostas/:chave/dossie', () => {
   it('AC-4 se a nova geração falha, o dossiê pronto anterior continua e o pedido fecha', async () => {
     const failing = vi.fn(async () => {
       throw new ClaudeError('timeout', 'sem resposta em 45 s');
-    }) as unknown as Ask;
+    }) as unknown as AskWithUsage;
     const { ask, settle, fake, drawer } = await setup({ ask: failing, suggestions: [okRow()] });
     expect((await ask()).status).toBe(202);
     await settle();
@@ -227,7 +227,7 @@ describe('#130 POST /api/propostas/:chave/dossie', () => {
       new Promise((_resolve, reject) => {
         init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
       });
-    const late = onDemandAsk({ kind: 'api-key', apiKey: 'sk-segredo' }, { fetch: hanging, timeoutMs: 20 });
+    const late = onDemandAskWithUsage({ kind: 'api-key', apiKey: 'sk-segredo' }, { fetch: hanging, timeoutMs: 20 });
     const { ask, settle, fake, drawer } = await setup({ ask: late });
     expect((await ask()).status).toBe(202);
     await settle();
@@ -245,6 +245,57 @@ describe('#130 POST /api/propostas/:chave/dossie', () => {
     expect(context).not.toHaveBeenCalled();
     expect(requests(fake)[0]?.finished_at).toBe(NOW.toISOString());
     expect(await drawer()).toMatchObject({ status: 'unavailable', reason: 'claude_failed' });
+    expect(suggestions(fake)[0]?.usage).toBeNull();
+  });
+});
+
+describe('#38 o uso de tokens gravado na linha do dossiê sob demanda', () => {
+  /** A Messages API falsa: uma resposta por chamada, com o campo `usage`. */
+  const messagesApi = (bodies: unknown[]): FetchFn => {
+    let i = 0;
+    return async () => {
+      const body = bodies[Math.min(i, bodies.length - 1)];
+      i += 1;
+      return new Response(JSON.stringify(body), { status: 200 });
+    };
+  };
+  const credentials = { kind: 'api-key', apiKey: 'sk-segredo' } as const;
+
+  it('o pedido na gaveta grava o dossiê com trigger on_demand e os tokens da resposta', async () => {
+    const fetch = messagesApi([
+      { content: [{ type: 'tool_use', name: 'responder', input: kitGoodRaw() }], usage: { input_tokens: 2100, output_tokens: 512 } },
+    ]);
+    const { ask, settle, fake } = await setup({ ask: onDemandAskWithUsage(credentials, { fetch }) });
+    expect((await ask()).status).toBe(202);
+    await settle();
+    expect(suggestions(fake)[0]).toMatchObject({
+      status: 'ok',
+      trigger: 'on_demand',
+      usage: { input_tokens: 2100, output_tokens: 512 },
+    });
+  });
+
+  it('a resposta fora do formato grava o erro e o uso já gasto', async () => {
+    const fetch = messagesApi([{ content: [{ type: 'text', text: 'oi' }], usage: { input_tokens: 700, output_tokens: 9 } }]);
+    const { ask, settle, fake } = await setup({ ask: onDemandAskWithUsage(credentials, { fetch }) });
+    expect((await ask()).status).toBe(202);
+    await settle();
+    expect(suggestions(fake)[0]).toMatchObject({
+      status: 'error',
+      reason: 'invalid_shape',
+      trigger: 'on_demand',
+      usage: { input_tokens: 700, output_tokens: 9 },
+    });
+  });
+
+  it('a falha antes de qualquer resposta (5xx) grava usage nulo', async () => {
+    const fetch: FetchFn = async () => new Response('', { status: 502 });
+    const { ask, settle, fake } = await setup({ ask: onDemandAskWithUsage(credentials, { fetch }) });
+    expect((await ask()).status).toBe(202);
+    await settle();
+    expect(suggestions(fake)[0]).toMatchObject({ status: 'error', reason: 'claude_failed', trigger: 'on_demand' });
+    expect(suggestions(fake)[0]?.usage).toBeNull();
+    expect(String(suggestions(fake)[0]?.error)).not.toContain('sk-segredo');
   });
 });
 
@@ -257,8 +308,8 @@ describe('#130 GET /api/propostas/:chave enquanto o Claude trabalha', () => {
     });
     const slow = vi.fn(async () => {
       await gate;
-      return kitGoodRaw();
-    }) as unknown as Ask;
+      return { value: kitGoodRaw(), usage: null };
+    }) as unknown as AskWithUsage;
     const { ask, settle, drawer } = await setup({ ask: slow });
     expect((await ask()).status).toBe(202);
     expect(await drawer()).toEqual({

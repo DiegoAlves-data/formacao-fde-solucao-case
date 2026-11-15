@@ -4,7 +4,7 @@
  * pelo `defer` (cron/tick.ts) — sem laço de tarefas, sem `pending()` relendo o estado da tabela.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { ClaudeError, type Ask } from '../../src/claude/client.js';
+import { ClaudeError, type AskWithUsage, type Usage } from '../../src/claude/client.js';
 import { restDb } from '../../src/claude/db.js';
 import { SupabaseRest } from '../../src/connectors/supabase-rest.js';
 import { generateOnEvent } from '../../src/dossier/event.js';
@@ -13,7 +13,8 @@ import { SupabaseDossierSource } from '../../src/dossier/source.js';
 import { FakePostgrest } from '../support/fake-postgrest.js';
 import { KIT_ACCESS_KEY, kitCase, kitGoodRaw } from './kit-case.js';
 
-const answering = (output: unknown) => vi.fn(async () => output) as unknown as Ask & ReturnType<typeof vi.fn>;
+const answering = (output: unknown, usage: Usage | null = null) =>
+  vi.fn(async () => ({ value: output, usage })) as unknown as AskWithUsage & ReturnType<typeof vi.fn>;
 
 async function setup(suggestions: Record<string, unknown>[] = []) {
   const { invoice, ctx, tables } = await kitCase();
@@ -28,7 +29,7 @@ async function setup(suggestions: Record<string, unknown>[] = []) {
       loadContext: async () => ctx,
       source: new SupabaseDossierSource(rest),
     });
-  const run = (ask: Ask) => generateOnEvent({ db, ask, context }, invoice);
+  const run = (askWithUsage: AskWithUsage) => generateOnEvent({ db, askWithUsage, context }, invoice);
   return { invoice, ctx, fake, db, context, run, gaveta };
 }
 
@@ -87,14 +88,14 @@ describe('#38 do evento à gaveta, sem rodada agendada', () => {
 
   it('AC-5 a falha do Claude grava o erro, e a gaveta mostra o dossiê indisponível', async () => {
     const { run, gaveta, fake } = await setup();
-    await run(vi.fn(async () => { throw new Error('caiu'); }) as unknown as Ask);
+    await run(vi.fn(async () => { throw new Error('caiu'); }) as unknown as AskWithUsage);
     expect(sugestoes(fake)[0]).toMatchObject({ status: 'error', output: null, trigger: 'event', reason: 'claude_failed' });
     expect(await gaveta()).toMatchObject({ status: 'unavailable', reason: 'claude_failed' });
   });
 
   it('AC-5 o prazo vencido vira o motivo timeout', async () => {
     const { run, fake } = await setup();
-    await run(vi.fn(async () => { throw new ClaudeError('timeout', 'sem resposta'); }) as unknown as Ask);
+    await run(vi.fn(async () => { throw new ClaudeError('timeout', 'sem resposta'); }) as unknown as AskWithUsage);
     expect(sugestoes(fake)[0]).toMatchObject({ status: 'error', trigger: 'event', reason: 'timeout' });
   });
 
@@ -108,13 +109,13 @@ describe('#38 do evento à gaveta, sem rodada agendada', () => {
 
   it('sem credencial (sem `ask`) não grava linha e não lança: a próxima rodada tenta de novo (auth é global)', async () => {
     const { fake, db, context, invoice } = await setup();
-    await expect(generateOnEvent({ db, context }, invoice)).resolves.toBeUndefined();
+    await expect(generateOnEvent({ db, askWithUsage: undefined, context }, invoice)).resolves.toBeUndefined();
     expect(sugestoes(fake)).toHaveLength(0);
   });
 
   it('limite de uso (429) não grava linha: a próxima rodada tenta de novo, como o laço (ClaudeError.isGlobal)', async () => {
     const { run, fake, gaveta } = await setup();
-    await run(vi.fn(async () => { throw new ClaudeError('rate_limit', 'HTTP 429'); }) as unknown as Ask);
+    await run(vi.fn(async () => { throw new ClaudeError('rate_limit', 'HTTP 429'); }) as unknown as AskWithUsage);
     expect(sugestoes(fake)).toHaveLength(0);
     expect(await gaveta()).toBeNull();
     await run(answering(kitGoodRaw()));
@@ -123,7 +124,7 @@ describe('#38 do evento à gaveta, sem rodada agendada', () => {
 
   it('credencial recusada (401) também não grava linha', async () => {
     const { run, fake } = await setup();
-    await run(vi.fn(async () => { throw new ClaudeError('auth', 'HTTP 401'); }) as unknown as Ask);
+    await run(vi.fn(async () => { throw new ClaudeError('auth', 'HTTP 401'); }) as unknown as AskWithUsage);
     expect(sugestoes(fake)).toHaveLength(0);
   });
 
@@ -170,7 +171,7 @@ describe('#38 do evento à gaveta, sem rodada agendada', () => {
   it('nota com pedido da gaveta em andamento (busy) não é chamada pelo evento', async () => {
     const { invoice, db, context } = await setup();
     const ask = answering(kitGoodRaw());
-    await generateOnEvent({ db, ask, context, busy: new Set([KIT_ACCESS_KEY]) }, invoice);
+    await generateOnEvent({ db, askWithUsage: ask, context, busy: new Set([KIT_ACCESS_KEY]) }, invoice);
     expect(ask).not.toHaveBeenCalled();
   });
 
@@ -187,6 +188,36 @@ describe('#38 do evento à gaveta, sem rodada agendada', () => {
       select: vi.fn(async () => []),
       upsert: vi.fn(async () => { throw new Error('banco fora do ar'); }),
     };
-    await expect(generateOnEvent({ db, ask: answering(kitGoodRaw()), context: async () => ctx }, invoice)).resolves.toBeUndefined();
+    await expect(generateOnEvent({ db, askWithUsage: answering(kitGoodRaw()), context: async () => ctx }, invoice)).resolves.toBeUndefined();
+  });
+});
+
+describe('#38 o uso de tokens gravado na linha do dossiê do evento', () => {
+  it('ok: grava input_tokens e output_tokens da resposta', async () => {
+    const { run, fake } = await setup();
+    await run(answering(kitGoodRaw(), { input_tokens: 1200, output_tokens: 340 }));
+    expect(sugestoes(fake)[0]).toMatchObject({ status: 'ok', trigger: 'event', usage: { input_tokens: 1200, output_tokens: 340 } });
+  });
+
+  it('resposta fora do formato: grava o erro e o uso já gasto', async () => {
+    const { run, fake } = await setup();
+    await run(answering({ summary: 'x' }, { input_tokens: 900, output_tokens: 15 }));
+    expect(sugestoes(fake)[0]).toMatchObject({ status: 'error', reason: 'invalid_shape', usage: { input_tokens: 900, output_tokens: 15 } });
+  });
+
+  it('falha do cliente depois de alguma resposta (o erro traz o uso): grava esse uso', async () => {
+    const { run, fake } = await setup();
+    const error = new ClaudeError('format', 'sem resposta final em 6 voltas');
+    error.usage = { input_tokens: 3000, output_tokens: 200 };
+    await run(vi.fn(async () => { throw error; }) as unknown as AskWithUsage);
+    expect(sugestoes(fake)[0]).toMatchObject({ status: 'error', usage: { input_tokens: 3000, output_tokens: 200 } });
+  });
+
+  it('falha antes de qualquer resposta (prazo): usage nulo', async () => {
+    const { run, fake } = await setup();
+    await run(vi.fn(async () => { throw new ClaudeError('timeout', 'sem resposta'); }) as unknown as AskWithUsage);
+    const [row] = sugestoes(fake);
+    expect(row).toMatchObject({ status: 'error', reason: 'timeout' });
+    expect(row?.usage).toBeNull();
   });
 });

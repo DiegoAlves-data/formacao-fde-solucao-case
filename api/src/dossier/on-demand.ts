@@ -1,7 +1,16 @@
 // #130 O dossiê pedido na gaveta: o mesmo agente da #38, disparado pela pessoa para uma proposta só.
 // #130 Roda depois do 202, pelo waitUntil do Worker. Nunca lança: qualquer falha vira linha de erro (ou mantém o
 // dossiê pronto anterior, AC-4) e o pedido sempre fecha em dossier_requests.
-import { ClaudeClient, ClaudeError, DEFAULT_MODEL, type Ask, type ClaudeCredentials, type FetchFn } from '../claude/client.js';
+import {
+  ClaudeClient,
+  ClaudeError,
+  DEFAULT_MODEL,
+  spentUsage,
+  type AskWithUsage,
+  type ClaudeCredentials,
+  type FetchFn,
+  type Usage,
+} from '../claude/client.js';
 import type { Db } from '../claude/db.js';
 import { storedError } from '../claude/runner.js';
 import { dossierRequest, failureReason, parseDossierOutput, type DossierInput } from '../claude/tasks/dossier.js';
@@ -19,12 +28,16 @@ const TABLE = 'claude_suggestions';
  */
 export const ON_DEMAND_ASK_TIMEOUT_MS = 20_000;
 
-/** #130 O Ask da geração sob demanda, com o prazo que cabe no waitUntil. */
-export function onDemandAsk(
+/**
+ * #130 O Claude da geração do dossiê, com o prazo que cabe no waitUntil. #38 Devolve também o uso de tokens, que
+ * o sob demanda e o evento gravam em claude_suggestions.usage.
+ */
+export function onDemandAskWithUsage(
   credentials: ClaudeCredentials,
   options: { readonly fetch?: FetchFn; readonly timeoutMs?: number } = {},
-): Ask {
-  return new ClaudeClient({ credentials, fetch: options.fetch, timeoutMs: options.timeoutMs ?? ON_DEMAND_ASK_TIMEOUT_MS }).ask;
+): AskWithUsage {
+  return new ClaudeClient({ credentials, fetch: options.fetch, timeoutMs: options.timeoutMs ?? ON_DEMAND_ASK_TIMEOUT_MS })
+    .askWithUsage;
 }
 
 /** #130 O que a geração sob demanda precisa; tudo injetável nos testes. */
@@ -34,8 +47,11 @@ export type OnDemandDeps = {
   readonly requests: DossierRequests;
   /** #130 O contexto da nota, como a gaveta e a tarefa montam (#68). */
   readonly context: (invoiceAccessKey: string) => Promise<CheckContext>;
-  /** #130 Sem credencial do Claude, undefined: a geração fecha em erro `claude_failed`. */
-  readonly ask?: Ask;
+  /**
+   * #130 Sem credencial do Claude, undefined: a geração fecha em erro `claude_failed`. #38 Com o uso de tokens e
+   * obrigatório no tipo (undefined explícito): esquecer a ligação em index.ts quebra o tsc.
+   */
+  readonly askWithUsage: AskWithUsage | undefined;
   /** #130 Valores que nunca entram na coluna error (o token, a chave do Supabase). */
   readonly secrets?: readonly string[];
   readonly now?: () => Date;
@@ -74,13 +90,18 @@ export async function generateOnDemand(deps: OnDemandDeps, request: OnDemandRequ
     const started = clock().getTime();
     let input: DossierInput | Record<string, never> = {};
     let result: { ok: true; output: unknown } | { ok: false; error: unknown };
+    let usage: Usage | null = null;
     try {
-      if (!deps.ask) throw new ClaudeError('auth', 'sem credencial do Claude no Worker');
+      if (!deps.askWithUsage) throw new ClaudeError('auth', 'sem credencial do Claude no Worker');
       input = dossierRequest(request.invoice, await deps.context(key));
-      const output = parseDossierOutput(await deps.ask<unknown>(input));
+      const answered = await deps.askWithUsage<unknown>(input);
+      usage = answered.usage;
+      const output = parseDossierOutput(answered.value);
       if (!output) throw new ClaudeError('format', 'dossier: resposta do Claude fora do formato');
       result = { ok: true, output };
     } catch (error) {
+      // #38 A falha depois de alguma resposta traz o uso já gasto; antes de qualquer resposta, nulo.
+      usage ??= spentUsage(error);
       result = { ok: false, error };
     }
     const latencyMs = clock().getTime() - started;
@@ -112,6 +133,7 @@ export async function generateOnDemand(deps: OnDemandDeps, request: OnDemandRequ
             requested_by: request.requestedBy,
             requested_at: request.requestedAt,
             latency_ms: latencyMs,
+            usage,
             ...fields,
           },
         ],

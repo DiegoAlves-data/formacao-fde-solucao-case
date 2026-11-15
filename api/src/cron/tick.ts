@@ -2,7 +2,7 @@ import { listDescriptionSuggestions, storedDescriptionSuggester } from "../conne
 import { blockDuplicateTitles } from "../connectors/duplicate-settler";
 import { runClaudeRound } from "../claude/cron";
 import { credentialsFromEnv } from "../claude/client";
-import { onDemandAsk } from "../dossier/on-demand";
+import { onDemandAskWithUsage } from "../dossier/on-demand";
 import { restDb } from "../claude/db";
 import { supabaseConnectors } from "../connectors/supabase-connectors";
 import type { CaptureDeps } from "./capture";
@@ -177,7 +177,8 @@ async function dispatchDossiers(
     const batch = eligible.slice(0, DOSSIER_EVENT_LIMIT);
     if (batch.length === 0) return;
 
-    const ask = onDemandAsk(credentials);
+    // #38 O mesmo Claude do sob demanda, com o uso de tokens que vai para a coluna usage.
+    const askWithUsage = onDemandAskWithUsage(credentials);
     const secret = credentials.kind === 'api-key' ? credentials.apiKey : credentials.token;
     const secrets = [secret, env.BARTE_ACADEMY_SUPABASE_SECRET_KEY ?? ''];
     // Um contexto só por rodada (sete leituras), como a tarefa antiga: cada nota sai da própria lista de capturadas.
@@ -185,7 +186,7 @@ async function dispatchDossiers(
     const context = (key: string) =>
       shared.then((ctx) => ({ ...ctx, capturedInvoices: ctx.capturedInvoices.filter((i) => i.accessKey !== key) }));
     for (const invoice of batch) {
-      defer(generateOnEvent({ db, ask, secrets, busy, context }, invoice));
+      defer(generateOnEvent({ db, askWithUsage, secrets, busy, context }, invoice));
     }
   } catch (error) {
     const status = error instanceof SupabaseRestError ? `HTTP ${error.status}` : "falha na leitura";

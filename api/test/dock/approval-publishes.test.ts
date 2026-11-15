@@ -4,9 +4,10 @@ import { SupabaseApprovalStore } from '../../src/approval/supabase-store.js';
 import type { DockActionOutbox } from '../../src/connectors/ports.js';
 import { supabaseConnectors } from '../../src/connectors/supabase-connectors.js';
 import { SupabaseRest } from '../../src/connectors/supabase-rest.js';
+import { appStoreActionOutbox } from '../../src/connectors/store-action.js';
 import { wmsDockActionOutbox } from '../../src/connectors/wms-dock-action.js';
 import { captureInvoices } from '../../src/cron/capture.js';
-import { publishDecidedDockActions } from '../../src/dock/publish-decided.js';
+import { publishDecidedDockActions, publishDecidedStoreActions } from '../../src/dock/publish-decided.js';
 import type { Env } from '../../src/env.js';
 import type { AccessVerifier } from '../../src/http/access.js';
 import { createWorker } from '../../src/index.js';
@@ -42,7 +43,7 @@ async function proposed(dockOutbox?: (rest: SupabaseRest) => DockActionOutbox) {
   const outbox = dockOutbox ? dockOutbox(rest) : wmsDockActionOutbox(rest);
   const worker = createWorker({
     verifier,
-    approval: { store, today: () => TODAY, dockOutbox: outbox },
+    approval: { store, today: () => TODAY, dockOutbox: outbox, storeOutbox: appStoreActionOutbox(rest) },
     dock: { supabase: () => rest, today: () => TODAY },
   });
   const call = (path: string, init: RequestInit = {}) =>
@@ -52,10 +53,12 @@ async function proposed(dockOutbox?: (rest: SupabaseRest) => DockActionOutbox) {
       ctx,
     );
   const dockRow = async (invoice: { accessKey: string; store: string; issuedOn: string }): Promise<Row> => {
-    const res = await call(`/api/doca?destino=${invoice.store}&data=${invoice.issuedOn}`);
+    // #135 Nota de loja aparece no recebimento na loja; nota de CD, na doca.
+    const path = invoice.store.startsWith('LJ-') ? `/api/recebimento-loja?loja=${invoice.store}` : `/api/doca?destino=${invoice.store}`;
+    const res = await call(`${path}&data=${invoice.issuedOn}`);
     const body = (await res.json()) as { rows: Row[] };
     const row = body.rows.find((r) => r.invoiceAccessKey === invoice.accessKey);
-    if (!row) throw new Error(`nota ${invoice.accessKey} fora da doca`);
+    if (!row) throw new Error(`nota ${invoice.accessKey} fora do recebimento`);
     return row;
   };
   return { fake, rest, call, dockRow };
@@ -105,8 +108,10 @@ describe('#43 AC-1 o que a regra aprova sem pessoa também chega à doca', () =>
     const { rest, dockRow } = await proposed();
     expect((await dockRow(NF036)).status.kind).toBe('aguardando_aprovacao');
 
+    // #135 O Cron roda as duas varreduras: a de CD (WMS) e a de loja (app da loja).
     const first = await publishDecidedDockActions(rest);
-    expect(first.published).toBeGreaterThan(0);
+    const second = await publishDecidedStoreActions(rest);
+    expect(first.published + second.published).toBeGreaterThan(0);
     expect((await dockRow(NF036)).status.kind).toBe('acao');
   });
 
@@ -123,5 +128,25 @@ describe('#43 AC-1 o que a regra aprova sem pessoa também chega à doca', () =>
     await publishDecidedDockActions(rest);
     const published = new Set(fake.rows('outbox_dock_actions').map((r) => r.invoice_access_key));
     expect(published.has(NF080.accessKey)).toBe(false);
+  });
+});
+
+describe('#135 AC-1 a pessoa aprova e a ação vai para o lugar do destino', () => {
+  it('#135/AC-1 aprovar nota de loja publica só no app da loja', async () => {
+    const { fake, rest, call } = await proposed();
+    const waiting = (await new SupabaseApprovalStore(rest, () => NOW).listAwaiting()).map((f) => f.invoice);
+    const note = waiting.find((i) => i.store.startsWith('LJ-'));
+    if (!note) throw new Error('o kit não tem nota de loja aguardando aprovação');
+    expect((await call(`/api/propostas/${note.accessKey}/aprovar`, { method: 'POST' })).status).toBe(200);
+    expect(fake.rows('outbox_store_actions').filter((r) => r.invoice_access_key === note.accessKey)).toHaveLength(1);
+    expect(fake.rows('outbox_dock_actions').filter((r) => r.invoice_access_key === note.accessKey)).toHaveLength(0);
+  });
+
+  it('#135/AC-1 aprovar nota de CD publica só no WMS', async () => {
+    const { fake, call } = await proposed();
+    expect((await call(`/api/propostas/${NF080.accessKey}/aprovar`, { method: 'POST' })).status).toBe(200);
+    expect(NF080.store).toMatch(/^CD-/);
+    expect(fake.rows('outbox_dock_actions').filter((r) => r.invoice_access_key === NF080.accessKey)).toHaveLength(1);
+    expect(fake.rows('outbox_store_actions').filter((r) => r.invoice_access_key === NF080.accessKey)).toHaveLength(0);
   });
 });

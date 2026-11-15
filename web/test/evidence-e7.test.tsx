@@ -1,3 +1,4 @@
+import { CHECKS, Invoice, Money, Quantity } from "@domain";
 import { render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { DivergenceDto } from "../src/api/contract";
@@ -59,5 +60,46 @@ describe("#33/AC-5 evidência do E7: o pagamento vinculado", () => {
   it("AC-5: sem evidência do banco, também cai no genérico", () => {
     render(<EvidenceView divergence={{ ...E7, evidence: [] }} />);
     expect(screen.getByText("Nenhuma evidência veio com esta divergência.")).toBeTruthy();
+  });
+});
+
+// #64: contrato com o domínio. A descrição vem da verificação E7 de verdade (CHECKS), e não de um texto
+// #64: escrito à mão; se o domínio mudar o formato, este teste quebra antes de a tela cair no genérico.
+describe("#33/AC-5 contrato com o domínio do E7", () => {
+  it("AC-5: a evidência que o checkPagoForaDoFluxo grava para o PG-5301 é lida pela tela", () => {
+    const invoice = Invoice.receive({
+      accessKey: "35261100000000000000550010000743741074374841",
+      number: "74374",
+      series: "1",
+      supplierId: "F09",
+      store: "LJ-025",
+      issuedOn: "2026-11-09",
+      purchaseOrderRef: null,
+      entryChannel: "sefaz",
+      items: [
+        {
+          supplierCode: "X1",
+          sku: null,
+          description: "Compra emergencial",
+          quantity: Quantity.of(1, "UN"),
+          unitPrice: Money.ofCents(343000),
+          total: Money.ofCents(343000),
+        },
+      ],
+      total: Money.ofCents(343000),
+    });
+    const payment = {
+      id: "PG-5301",
+      supplierId: "F09",
+      store: "LJ-025",
+      paidOn: "2026-11-02",
+      amount: Money.ofCents(343000),
+      method: "boleto avulso",
+      origin: "compra emergencial da loja, fora do fluxo",
+      invoiceAccessKey: null,
+    };
+    const ctx = { purchaseOrders: [], suppliers: [], products: [], postedInvoices: [], payments: [payment], receipts: [], capturedInvoices: [] };
+    const [divergence] = CHECKS.find((c) => c.id === "E7")!.run(invoice, ctx);
+    expect(linkedPayment([...divergence!.evidence])).toEqual(linkedPayment(E7.evidence));
   });
 });

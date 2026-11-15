@@ -37,7 +37,7 @@ function PagoForaDoFluxoEvidence({ divergence }: EvidenceProps) {
   return (
     <Panel
       title={divergenceLabel("E7")}
-      description="A loja já pagou esta compra no banco, sem título. A nota fica vinculada ao pagamento e não vai à lista do dia."
+      description={`Evidência: pagamento fora do fluxo ${payment.id}. A loja já pagou esta compra no banco, sem título.`}
       size="sm"
       padding="md"
     >

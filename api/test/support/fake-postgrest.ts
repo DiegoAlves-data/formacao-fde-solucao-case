@@ -114,6 +114,8 @@ export class FakePostgrest {
     if (table === 'proposals') return { id: this.nextId++, state: 'registrada', regua_line: null, created_at: now };
     if (table === 'approvals') return { id: this.nextId++, dock_action: null, decided_on: null, approved_at: now };
     if (table === 'titles') return { state: 'lancado', updated_at: now };
+    // #130 dossier_requests.id é identidade: o open() lê o id da linha devolvida.
+    if (table === 'dossier_requests') return { id: this.nextId++ };
     return {};
   }
 

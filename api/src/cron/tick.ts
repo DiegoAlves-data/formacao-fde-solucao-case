@@ -32,6 +32,8 @@ const PUBLISH_WINDOW_DAYS = 7;
  * #38 Teto de disparos do dossiê por rodada, no mesmo espírito do CRON_LIMIT de claude/cron.ts: o Worker tem um
  * teto de subrequests por invocação, e a captura (o caminho crítico) não pode disputar com o dossiê. O que
  * passar do teto não fica esquecido: a proposta abre na gaveta sem dossiê, e a pessoa pede pelo botão (#130).
+ * Orçamento por disparo: ler a linha da sugestão, abrir e fechar o pedido em dossier_requests (+2, #130/#38 AC-1),
+ * chamar o Claude e gravar a linha: 5 subrequests, 25 no teto, além das leituras do contexto da rodada.
  */
 export const DOSSIER_EVENT_LIMIT = 5;
 
@@ -164,9 +166,10 @@ async function dispatchDossiers(
   try {
     const now = new Date();
     const db = restDb(rest);
+    const requests = new SupabaseDossierRequests(rest);
     const [states, busy, awaiting] = await Promise.all([
       keyStates(db, DOSSIER_TASK, now),
-      busyKeys(new SupabaseDossierRequests(rest), now),
+      busyKeys(requests, now),
       new SupabaseApprovalStore(rest).listAwaiting(),
     ]);
     const newKeys = new Set(newlyAwaiting.map((i) => i.accessKey));
@@ -185,7 +188,7 @@ async function dispatchDossiers(
     const context = (key: string) =>
       shared.then((ctx) => ({ ...ctx, capturedInvoices: ctx.capturedInvoices.filter((i) => i.accessKey !== key) }));
     for (const invoice of batch) {
-      defer(generateOnEvent({ db, ask, secrets, busy, context }, invoice));
+      defer(generateOnEvent({ db, ask, secrets, busy, context, requests }, invoice));
     }
   } catch (error) {
     const status = error instanceof SupabaseRestError ? `HTTP ${error.status}` : "falha na leitura";

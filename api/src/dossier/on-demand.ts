@@ -47,6 +47,8 @@ export type OnDemandRequest = {
   readonly invoice: InvoiceView;
   readonly requestedBy: string;
   readonly requestedAt: string;
+  /** #130 O id do pedido aberto em dossier_requests: é ele, e só ele, que fecha no fim. */
+  readonly requestId?: number;
 };
 
 type Previous = { readonly status: string; readonly attempts: number };
@@ -122,7 +124,7 @@ export async function generateOnDemand(deps: OnDemandDeps, request: OnDemandRequ
     log(`#130 dossiê sob demanda da nota ${key} não gravado: ${storedError(error, deps.secrets)}`);
   } finally {
     try {
-      await deps.requests.finish(key, clock());
+      if (request.requestId !== undefined) await deps.requests.finish(request.requestId, clock());
     } catch (error) {
       // #130 O pedido aberto vira abandonado em IN_FLIGHT_MS; a gaveta para de mostrar Gerando sozinha.
       log(`#130 pedido do dossiê da nota ${key} não fechado: ${storedError(error, deps.secrets)}`);

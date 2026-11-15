@@ -20,6 +20,7 @@ import {
 import { generateOnDemand, type OnDemandDeps } from '../dossier/on-demand.js';
 import {
   inFlight,
+  triggerOf,
   LIMIT_WINDOW_MS,
   MAX_REQUESTS_PER_WINDOW,
   IN_FLIGHT_MS,
@@ -254,7 +255,7 @@ function stockQuantity(
 async function proposalDossier(key: string, file: CaseFile, dossier?: DossierDeps): Promise<ProposalDossierField> {
   if (!dossier) return dossierField(null);
   const generating = await openRequest(key, dossier);
-  if (generating) return dossierGenerating(generating.requested_by, generating.requested_at);
+  if (generating) return dossierGenerating(generating.requested_by, generating.requested_at, triggerOf(generating));
   try {
     return dossierField(
       await readDossier({
@@ -297,15 +298,16 @@ async function requestDossier(deps: ApprovalDeps, key: string, identity: Identit
   const now = (dossier.now ?? (() => new Date()))();
   const recent = await dossier.requests.since(key, new Date(now.getTime() - LIMIT_WINDOW_MS));
   if (inFlight(recent, now)) return error(409, 'em_andamento', 'O Claude já está escrevendo este dossiê');
-  if (recent.length >= MAX_REQUESTS_PER_WINDOW) {
+  // #130 #38 O limite é dos pedidos da pessoa: a linha do evento não conta.
+  if (recent.filter((r) => triggerOf(r) === 'on_demand').length >= MAX_REQUESTS_PER_WINDOW) {
     return error(429, 'limite', 'Muitos pedidos para esta proposta. Tente de novo em alguns minutos.');
   }
   const requestedAt = now.toISOString();
-  await dossier.requests.open({ input_key: key, requested_by: identity.email, requested_at: requestedAt });
+  const requestId = await dossier.requests.open({ input_key: key, requested_by: identity.email, requested_at: requestedAt });
   defer(
     generateOnDemand(
       { ...dossier.onDemand, requests: dossier.requests, context: dossier.context, now: dossier.now },
-      { invoiceAccessKey: key, invoice: file.invoice, requestedBy: identity.email, requestedAt },
+      { invoiceAccessKey: key, invoice: file.invoice, requestedBy: identity.email, requestedAt, requestId },
     ),
   );
   return Response.json(

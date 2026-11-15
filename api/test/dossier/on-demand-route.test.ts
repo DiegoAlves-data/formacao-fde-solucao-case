@@ -278,3 +278,30 @@ describe('#130 GET /api/propostas/:chave enquanto o Claude trabalha', () => {
     expect(await drawer()).toMatchObject({ status: 'unavailable', reason: 'pending' });
   });
 });
+
+describe('#130 #38 o pedido aberto pelo evento', () => {
+  const eventRow = () => ({ input_key: KIT_ACCESS_KEY, requested_by: 'claude', requested_at: '2026-11-15T12:59:00.000Z', finished_at: null, trigger: 'event' });
+
+  it('#38 AC-1 a gaveta mostra generating com trigger event enquanto o evento roda', async () => {
+    const { drawer } = await setup({ ask: answering(kitGoodRaw()), requests: [eventRow()] });
+    expect(await drawer()).toEqual({ status: 'generating', trigger: 'event', requestedBy: 'claude', requestedAt: '2026-11-15T12:59:00.000Z' });
+  });
+
+  it('#130 corrida: o clique na gaveta durante o evento recebe 409 e não chama o Claude', async () => {
+    const claude = answering(kitGoodRaw());
+    const { ask, settle, fake } = await setup({ ask: claude, requests: [eventRow()] });
+    expect((await ask()).status).toBe(409);
+    await settle();
+    expect(claude).not.toHaveBeenCalled();
+    expect(requests(fake)).toHaveLength(1);
+  });
+
+  it('#130 a linha do evento não conta no limite de pedidos da pessoa', async () => {
+    const done = (at: string, trigger: string) => ({ input_key: KIT_ACCESS_KEY, requested_by: 'x', requested_at: at, finished_at: at, trigger });
+    const { ask } = await setup({
+      ask: answering(kitGoodRaw()),
+      requests: [done('2026-11-15T12:10:00.000Z', 'event'), done('2026-11-15T12:20:00.000Z', 'on_demand'), done('2026-11-15T12:30:00.000Z', 'on_demand')],
+    });
+    expect((await ask()).status).toBe(202);
+  });
+});

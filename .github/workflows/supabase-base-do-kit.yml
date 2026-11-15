@@ -1,0 +1,62 @@
+name: Supabase, base do kit
+
+# A cada merge na main que toque as migrações ou os dados do kit: aplica as migrações no projeto
+# Supabase, refaz a carga e confere (AC-1 a AC-3). Credenciais só dos secrets BARTE_ACADEMY_*.
+on:
+  push:
+    branches: [main]
+    paths:
+      - supabase/**
+      - data/kit/**
+      - scripts/carregar_kit.py
+      - scripts/kit_online_test.py
+      - .github/workflows/supabase-base-do-kit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Dois merges seguidos não aplicam migrações ao mesmo tempo: o segundo espera o primeiro.
+concurrency:
+  group: supabase-base-do-kit
+  cancel-in-progress: false
+
+env:
+  SUPABASE_CLI: supabase@3.1.0
+
+jobs:
+  aplicar:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Testes offline (contrato e transformação)
+        run: python3 -m unittest discover -s scripts -p 'kit_contrato_test.py' && python3 -m unittest discover -s scripts -p 'carregar_kit_test.py'
+
+      - name: Ligar ao projeto
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.BARTE_ACADEMY_SUPABASE_ACCESS_TOKEN }}
+        run: npx --yes "$SUPABASE_CLI" link --project-ref "${{ vars.BARTE_ACADEMY_SUPABASE_PROJECT_ID }}"
+
+      # Na CLI 3.x o db push é local por padrão: --remote aplica no projeto ligado, e --yes responde
+      # a confirmação das mudanças hospedadas.
+      - name: Aplicar as migrações
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.BARTE_ACADEMY_SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.BARTE_ACADEMY_SUPABASE_DB_PASSWORD }}
+        run: npx --yes "$SUPABASE_CLI" db push --remote --yes
+
+      - name: Carregar a base do kit
+        env:
+          BARTE_ACADEMY_SUPABASE_URL: ${{ vars.BARTE_ACADEMY_SUPABASE_URL }}
+          BARTE_ACADEMY_SUPABASE_SECRET_KEY: ${{ secrets.BARTE_ACADEMY_SUPABASE_SECRET_KEY }}
+        run: python3 scripts/carregar_kit.py
+
+      - name: Conferir contagens, somas, carga repetida e chave pública
+        env:
+          BARTE_ACADEMY_SUPABASE_URL: ${{ vars.BARTE_ACADEMY_SUPABASE_URL }}
+          BARTE_ACADEMY_SUPABASE_SECRET_KEY: ${{ secrets.BARTE_ACADEMY_SUPABASE_SECRET_KEY }}
+          BARTE_ACADEMY_SUPABASE_PROJECT_ID: ${{ vars.BARTE_ACADEMY_SUPABASE_PROJECT_ID }}
+          BARTE_ACADEMY_SUPABASE_ACCESS_TOKEN: ${{ secrets.BARTE_ACADEMY_SUPABASE_ACCESS_TOKEN }}
+        run: python3 -m unittest discover -s scripts -p 'kit_online_test.py' -v

@@ -1,0 +1,337 @@
+{
+ "contrato": "base_do_kit",
+ "versao": "1.0.0",
+ "schema": "public",
+ "prefixo_tabelas": "kit_",
+ "descricao": "Tabelas que espelham a base do kit da Já Chegou (SEFAZ, ERP, WMS e app de loja, banco) para os conectores simulados do plano #53 lerem. O Supabase guarda uma cópia fiel dos JSON; não há transformação nem tabela derivada.",
+ "fonte_fixada": {
+   "caminho": "data/kit/*.json",
+   "referencia": "cabeça da branch main do repositório",
+   "observacao": "A base é estática. O gabarito do kit não faz parte da fonte e não entra no repositório. É esta fonte, e não o Supabase, que a reconciliação toma como verdade."
+ },
+ "consumidor": {
+   "quem": "o Worker do plano #53",
+   "acesso": "somente com a chave secreta do projeto; nenhuma chave pública lê estas tabelas"
+ },
+ "seguranca": {
+   "rls": "ligado em toda tabela",
+   "politicas": "nenhuma",
+   "leitura_chave_publica": "zero linhas"
+ },
+ "frescor": {
+   "regra": "Depois de cada merge na main, o fluxo do GitHub Actions aplica as migrações e refaz a carga; ao fim da execução, o Supabase é igual a data/kit/ no topo da main.",
+   "janela": "uma execução do fluxo por merge que toque supabase/**, data/kit/** ou a carga",
+   "dados": "estáticos"
+ },
+ "completude": {
+   "regra": "cada tabela tem tantos registros quanto a regra de contagem diz, aplicada ao arquivo da fonte",
+   "regras": {
+     "registros": "número de registros do nível mais alto do arquivo",
+     "itens": "soma do tamanho do campo itens de todos os registros do arquivo",
+     "objeto_unico": "1: o arquivo é um objeto só e vira uma linha",
+     "chaves_do_objeto": "número de chaves do objeto: cada chave vira uma linha"
+  }
+ },
+ "reconciliacao": {
+   "tolerancia": "0.00",
+   "regra": "a soma das colunas listadas em somas, lida do Supabase, é igual à soma lida do JSON, em decimal exato"
+ },
+ "mudanca_incompativel": {
+   "regra": "Remover ou renomear coluna ou tabela, estreitar um tipo, mudar uma chave ou tirar um valor de um enum são mudanças incompatíveis, porque os conectores do plano #53 leem estas tabelas.",
+   "como": "Entram como migração nova, marcada como incompatível na descrição do pull request, e a versão do contrato sobe a maior. Nunca se edita uma migração já aplicada."
+ },
+ "decisoes": ["kit_notas_lancadas.chave não tem chave estrangeira para kit_notas: 29 das 34 chaves não estão em notas.json, e isso é dado legítimo da fonte.", "kit_pagamentos.nota_chave e kit_recebimentos.nota_chave são texto sem chave estrangeira: no pagamento todas são nulas e no recebimento 4 chaves não estão em notas.json.", "kit_notas_lancadas.nota_id é nulo em toda a fonte, por isso não é obrigatório nem único.", "unidade não tem restrição de valores: a fonte traz só UN, e a caixa (CX) aparece na exceção E4 dos documentos da nota."],
+ "tabelas": [
+  {
+     "nome": "kit_fornecedores",
+     "arquivo": "fornecedores.json",
+     "fonte_sistema": "ERP (cadastro)",
+     "contagem": {"regra": "registros"},
+     "colunas": [
+    {"nome": "fornecedor_id", "tipo": "text", "nulo": false},
+    {"nome": "razao_social", "tipo": "text", "nulo": false},
+    {"nome": "cnpj", "tipo": "text", "nulo": false},
+    {"nome": "bloqueado", "tipo": "boolean", "nulo": false},
+    {"nome": "motivo_bloqueio", "tipo": "text", "nulo": false}
+   ],
+     "chave_primaria": ["fornecedor_id"],
+     "chaves_estrangeiras": [],
+     "unicas": [],
+     "checks": [],
+     "somas": []
+  },
+  {
+     "nome": "kit_produtos",
+     "arquivo": "produtos.json",
+     "fonte_sistema": "ERP (cadastro)",
+     "contagem": {"regra": "registros"},
+     "colunas": [
+    {"nome": "sku", "tipo": "text", "nulo": false},
+    {"nome": "descricao", "tipo": "text", "nulo": false},
+    {"nome": "fornecedor_id", "tipo": "text", "nulo": false},
+    {"nome": "codigo_fornecedor", "tipo": "text", "nulo": false},
+    {"nome": "unidade_base", "tipo": "text", "nulo": false},
+    {"nome": "fator_caixa", "tipo": "integer", "nulo": false},
+    {"nome": "preco_referencia_un", "tipo": "numeric(12,2)", "nulo": false}
+   ],
+     "chave_primaria": ["sku"],
+     "chaves_estrangeiras": [
+    {"colunas": ["fornecedor_id"], "ref_tabela": "kit_fornecedores", "ref_colunas": ["fornecedor_id"]}
+   ],
+     "unicas": [],
+     "checks": [],
+     "somas": []
+  },
+  {
+     "nome": "kit_ordens",
+     "arquivo": "ordens.json",
+     "fonte_sistema": "ERP (compras)",
+     "contagem": {"regra": "registros"},
+     "colunas": [
+    {"nome": "ordem_id", "tipo": "text", "nulo": false},
+    {"nome": "fornecedor_id", "tipo": "text", "nulo": false},
+    {"nome": "destino", "tipo": "text", "nulo": false},
+    {"nome": "data_emissao", "tipo": "date", "nulo": false},
+    {"nome": "status", "tipo": "text", "nulo": false},
+    {"nome": "motivo_status", "tipo": "text", "nulo": false},
+    {"nome": "valor_total", "tipo": "numeric(14,2)", "nulo": false}
+   ],
+     "chave_primaria": ["ordem_id"],
+     "chaves_estrangeiras": [
+    {"colunas": ["fornecedor_id"], "ref_tabela": "kit_fornecedores", "ref_colunas": ["fornecedor_id"]}
+   ],
+     "unicas": [],
+     "checks": ["status in ('aberta', 'atendida', 'travada')"],
+     "somas": ["valor_total"]
+  },
+  {
+     "nome": "kit_ordem_itens",
+     "arquivo": "ordens.json",
+     "fonte_sistema": "ERP (compras)",
+     "contagem": {"regra": "itens", "campo": "itens"},
+     "colunas": [
+    {"nome": "ordem_id", "tipo": "text", "nulo": false},
+    {"nome": "codigo_fornecedor", "tipo": "text", "nulo": false},
+    {"nome": "sku", "tipo": "text", "nulo": true},
+    {"nome": "descricao", "tipo": "text", "nulo": false},
+    {"nome": "quantidade", "tipo": "integer", "nulo": false},
+    {"nome": "unidade", "tipo": "text", "nulo": false},
+    {"nome": "preco_unitario", "tipo": "numeric(12,2)", "nulo": false}
+   ],
+     "chave_primaria": ["ordem_id", "codigo_fornecedor"],
+     "chaves_estrangeiras": [
+    {"colunas": ["ordem_id"], "ref_tabela": "kit_ordens", "ref_colunas": ["ordem_id"]},
+    {"colunas": ["sku"], "ref_tabela": "kit_produtos", "ref_colunas": ["sku"]}
+   ],
+     "unicas": [],
+     "checks": [],
+     "somas": []
+  },
+  {
+     "nome": "kit_notas",
+     "arquivo": "notas.json",
+     "fonte_sistema": "SEFAZ",
+     "contagem": {"regra": "registros"},
+     "colunas": [
+    {"nome": "chave", "tipo": "text", "nulo": false},
+    {"nome": "nota_id", "tipo": "text", "nulo": false},
+    {"nome": "numero", "tipo": "integer", "nulo": false},
+    {"nome": "serie", "tipo": "integer", "nulo": false},
+    {"nome": "fornecedor_id", "tipo": "text", "nulo": false},
+    {"nome": "destino", "tipo": "text", "nulo": false},
+    {"nome": "data_emissao", "tipo": "date", "nulo": false},
+    {"nome": "pedido_referenciado", "tipo": "text", "nulo": true},
+    {"nome": "canal_entrada", "tipo": "text", "nulo": false},
+    {"nome": "valor_total", "tipo": "numeric(14,2)", "nulo": false}
+   ],
+     "chave_primaria": ["chave"],
+     "chaves_estrangeiras": [
+    {"colunas": ["fornecedor_id"], "ref_tabela": "kit_fornecedores", "ref_colunas": ["fornecedor_id"]},
+    {"colunas": ["pedido_referenciado"], "ref_tabela": "kit_ordens", "ref_colunas": ["ordem_id"]}
+   ],
+     "unicas": [
+    ["nota_id"]
+   ],
+     "checks": [],
+     "somas": ["valor_total"]
+  },
+  {
+     "nome": "kit_nota_itens",
+     "arquivo": "notas.json",
+     "fonte_sistema": "SEFAZ",
+     "contagem": {"regra": "itens", "campo": "itens"},
+     "colunas": [
+    {"nome": "chave", "tipo": "text", "nulo": false},
+    {"nome": "codigo_fornecedor", "tipo": "text", "nulo": false},
+    {"nome": "sku", "tipo": "text", "nulo": true},
+    {"nome": "descricao", "tipo": "text", "nulo": false},
+    {"nome": "quantidade", "tipo": "integer", "nulo": false},
+    {"nome": "unidade", "tipo": "text", "nulo": false},
+    {"nome": "preco_unitario", "tipo": "numeric(12,2)", "nulo": false},
+    {"nome": "valor", "tipo": "numeric(14,2)", "nulo": false}
+   ],
+     "chave_primaria": ["chave", "codigo_fornecedor"],
+     "chaves_estrangeiras": [
+    {"colunas": ["chave"], "ref_tabela": "kit_notas", "ref_colunas": ["chave"]},
+    {"colunas": ["sku"], "ref_tabela": "kit_produtos", "ref_colunas": ["sku"]}
+   ],
+     "unicas": [],
+     "checks": [],
+     "somas": []
+  },
+  {
+     "nome": "kit_notas_lancadas",
+     "arquivo": "notas_lancadas.json",
+     "fonte_sistema": "ERP (contas a pagar)",
+     "contagem": {"regra": "registros"},
+     "colunas": [
+    {"nome": "chave", "tipo": "text", "nulo": false},
+    {"nome": "nota_id", "tipo": "text", "nulo": true},
+    {"nome": "numero", "tipo": "integer", "nulo": false},
+    {"nome": "serie", "tipo": "integer", "nulo": false},
+    {"nome": "fornecedor_id", "tipo": "text", "nulo": false},
+    {"nome": "destino", "tipo": "text", "nulo": false},
+    {"nome": "data_emissao", "tipo": "date", "nulo": false},
+    {"nome": "pedido_referenciado", "tipo": "text", "nulo": false},
+    {"nome": "canal_entrada", "tipo": "text", "nulo": false},
+    {"nome": "valor_total", "tipo": "numeric(14,2)", "nulo": false},
+    {"nome": "situacao", "tipo": "text", "nulo": false}
+   ],
+     "chave_primaria": ["chave"],
+     "chaves_estrangeiras": [
+    {"colunas": ["fornecedor_id"], "ref_tabela": "kit_fornecedores", "ref_colunas": ["fornecedor_id"]},
+    {"colunas": ["pedido_referenciado"], "ref_tabela": "kit_ordens", "ref_colunas": ["ordem_id"]}
+   ],
+     "unicas": [],
+     "checks": ["situacao in ('lançada', 'paga')"],
+     "somas": ["valor_total"]
+  },
+  {
+     "nome": "kit_nota_lancada_itens",
+     "arquivo": "notas_lancadas.json",
+     "fonte_sistema": "ERP (contas a pagar)",
+     "contagem": {"regra": "itens", "campo": "itens"},
+     "colunas": [
+    {"nome": "chave", "tipo": "text", "nulo": false},
+    {"nome": "codigo_fornecedor", "tipo": "text", "nulo": false},
+    {"nome": "sku", "tipo": "text", "nulo": true},
+    {"nome": "descricao", "tipo": "text", "nulo": false},
+    {"nome": "quantidade", "tipo": "integer", "nulo": false},
+    {"nome": "unidade", "tipo": "text", "nulo": false},
+    {"nome": "preco_unitario", "tipo": "numeric(12,2)", "nulo": false},
+    {"nome": "valor", "tipo": "numeric(14,2)", "nulo": false}
+   ],
+     "chave_primaria": ["chave", "codigo_fornecedor"],
+     "chaves_estrangeiras": [
+    {"colunas": ["chave"], "ref_tabela": "kit_notas_lancadas", "ref_colunas": ["chave"]},
+    {"colunas": ["sku"], "ref_tabela": "kit_produtos", "ref_colunas": ["sku"]}
+   ],
+     "unicas": [],
+     "checks": [],
+     "somas": []
+  },
+  {
+     "nome": "kit_pagamentos",
+     "arquivo": "pagamentos.json",
+     "fonte_sistema": "banco",
+     "contagem": {"regra": "registros"},
+     "colunas": [
+    {"nome": "pagamento_id", "tipo": "text", "nulo": false},
+    {"nome": "fornecedor_id", "tipo": "text", "nulo": false},
+    {"nome": "destino", "tipo": "text", "nulo": false},
+    {"nome": "data", "tipo": "date", "nulo": false},
+    {"nome": "valor", "tipo": "numeric(14,2)", "nulo": false},
+    {"nome": "forma", "tipo": "text", "nulo": false},
+    {"nome": "origem", "tipo": "text", "nulo": false},
+    {"nome": "nota_chave", "tipo": "text", "nulo": true}
+   ],
+     "chave_primaria": ["pagamento_id"],
+     "chaves_estrangeiras": [
+    {"colunas": ["fornecedor_id"], "ref_tabela": "kit_fornecedores", "ref_colunas": ["fornecedor_id"]}
+   ],
+     "unicas": [],
+     "checks": [],
+     "somas": ["valor"]
+  },
+  {
+     "nome": "kit_recebimentos",
+     "arquivo": "recebimentos.json",
+     "fonte_sistema": "WMS e app de loja",
+     "contagem": {"regra": "registros"},
+     "colunas": [
+    {"nome": "recebimento_id", "tipo": "text", "nulo": false},
+    {"nome": "nota_chave", "tipo": "text", "nulo": true},
+    {"nome": "ordem_id", "tipo": "text", "nulo": true},
+    {"nome": "fornecedor_id", "tipo": "text", "nulo": false},
+    {"nome": "destino", "tipo": "text", "nulo": false},
+    {"nome": "canal", "tipo": "text", "nulo": false},
+    {"nome": "data", "tipo": "date", "nulo": false},
+    {"nome": "observacao", "tipo": "text", "nulo": false}
+   ],
+     "chave_primaria": ["recebimento_id"],
+     "chaves_estrangeiras": [
+    {"colunas": ["ordem_id"], "ref_tabela": "kit_ordens", "ref_colunas": ["ordem_id"]},
+    {"colunas": ["fornecedor_id"], "ref_tabela": "kit_fornecedores", "ref_colunas": ["fornecedor_id"]}
+   ],
+     "unicas": [],
+     "checks": ["canal in ('doca_cd', 'app_loja')"],
+     "somas": []
+  },
+  {
+     "nome": "kit_recebimento_itens",
+     "arquivo": "recebimentos.json",
+     "fonte_sistema": "WMS e app de loja",
+     "contagem": {"regra": "itens", "campo": "itens"},
+     "colunas": [
+    {"nome": "recebimento_id", "tipo": "text", "nulo": false},
+    {"nome": "codigo_fornecedor", "tipo": "text", "nulo": false},
+    {"nome": "descricao", "tipo": "text", "nulo": false},
+    {"nome": "quantidade", "tipo": "integer", "nulo": false},
+    {"nome": "unidade", "tipo": "text", "nulo": false}
+   ],
+     "chave_primaria": ["recebimento_id", "codigo_fornecedor"],
+     "chaves_estrangeiras": [
+    {"colunas": ["recebimento_id"], "ref_tabela": "kit_recebimentos", "ref_colunas": ["recebimento_id"]}
+   ],
+     "unicas": [],
+     "checks": [],
+     "somas": []
+  },
+  {
+     "nome": "kit_regua",
+     "arquivo": "regua.json",
+     "fonte_sistema": "regra de negócio (régua)",
+     "contagem": {"regra": "objeto_unico"},
+     "colunas": [
+    {"nome": "id", "tipo": "smallint", "nulo": false},
+    {"nome": "tolerancia_valor", "tipo": "numeric", "nulo": false},
+    {"nome": "tolerancia_percentual", "tipo": "numeric", "nulo": false},
+    {"nome": "teto_regra_tolerancia", "tipo": "numeric", "nulo": false},
+    {"nome": "teto_analista", "tipo": "numeric", "nulo": false},
+    {"nome": "teto_coordenacao", "tipo": "numeric", "nulo": false},
+    {"nome": "niveis", "tipo": "text[]", "nulo": false},
+    {"nome": "texto", "tipo": "text[]", "nulo": false}
+   ],
+     "chave_primaria": ["id"],
+     "chaves_estrangeiras": [],
+     "unicas": [],
+     "checks": ["id = 1"],
+     "somas": []
+  },
+  {
+     "nome": "kit_excecoes",
+     "arquivo": "excecoes.json",
+     "fonte_sistema": "regra de negócio (exceções)",
+     "contagem": {"regra": "chaves_do_objeto"},
+     "colunas": [
+    {"nome": "codigo", "tipo": "text", "nulo": false},
+    {"nome": "descricao", "tipo": "text", "nulo": false}
+   ],
+     "chave_primaria": ["codigo"],
+     "chaves_estrangeiras": [],
+     "unicas": [],
+     "checks": [],
+     "somas": []
+  }
+ ]
+}

@@ -14,8 +14,8 @@ describe('#59/AC-5 captura do Cron (offline)', () => {
     const first = await captureInvoices(captureDeps);
     const second = await captureInvoices(captureDeps);
 
-    expect(first).toEqual({ seen: 80, inserted: 80, checked: 80 });
-    expect(second).toEqual({ seen: 80, inserted: 0, checked: 0 });
+    expect(first).toEqual({ seen: 80, inserted: 80, checked: 80, failed: 0 });
+    expect(second).toEqual({ seen: 80, inserted: 0, checked: 0, failed: 0 });
     const rows = fake.rows('invoices');
     expect(new Set(rows.map((r) => r.access_key)).size).toBe(80);
     expect(rows).toHaveLength(80);

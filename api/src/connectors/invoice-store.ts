@@ -10,7 +10,12 @@ export interface InvoiceStore {
   listPendingKeys(): Promise<string[]>;
   /** #59 Grava divergências e depois estado e classificação das notas conferidas (REL-3). */
   saveChecked(invoices: readonly Invoice[], checkedAt: string): Promise<void>;
+  /** #56 Marca a nota que quebrou na conferência com o motivo; ela segue a conferir. */
+  markCheckFailed(failures: readonly CheckFailure[]): Promise<void>;
 }
+
+/** #56 Uma nota que a conferência não conseguiu conferir, e por quê. */
+export type CheckFailure = { readonly accessKey: string; readonly reason: string };
 
 function baseRow(invoice: Invoice): Record<string, unknown> {
   return {
@@ -74,8 +79,21 @@ export class SupabaseInvoiceStore implements InvoiceStore {
     await this.rest.upsert('divergences', divergences, 'invoice_access_key,seq');
     await this.rest.upsert(
       'invoices',
-      invoices.map((i) => ({ ...baseRow(i), state: i.state, classification: i.classification, checked_at: checkedAt })),
+      invoices.map((i) => ({
+        ...baseRow(i),
+        state: i.state,
+        classification: i.classification,
+        checked_at: checkedAt,
+        check_error: null, // #56 conferida, o motivo de uma rodada anterior sai
+      })),
       'access_key',
     );
+  }
+
+  /** #56 Uma escrita por nota: são poucas, e cada uma leva o motivo dela. */
+  async markCheckFailed(failures: readonly CheckFailure[]): Promise<void> {
+    for (const { accessKey, reason } of failures) {
+      await this.rest.update('invoices', { access_key: `eq.${accessKey}` }, { check_error: reason });
+    }
   }
 }

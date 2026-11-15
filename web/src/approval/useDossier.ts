@@ -7,13 +7,15 @@ import { texts } from "../texts";
 
 /** #130 De quanto em quanto tempo a gaveta lê a proposta de novo enquanto o status é `generating`. */
 export const DOSSIER_POLL_MS = 3_000;
-/** #130 Teto da espera: a geração sob demanda tem prazo de 20 s no Worker; passado isto, a gaveta para de ler. */
+/** #130 Teto da espera: a geração tem prazo de 20 s no Worker; passado isto, a gaveta para de ler. */
 export const DOSSIER_POLL_LIMIT_MS = 90_000;
 
 export interface DossierState {
-  /** #130 O que a gaveta mostra: em geração, o estado Gerando no lugar do anterior (AC-4). */
+  /** #130 O que a gaveta mostra: Gerando, ou o dossiê pronto anterior durante "Gerar de novo" (AC-4). */
   dossier: ProposalDossierDto | null | undefined;
-  /** #130 O aviso do 409, do 429 ou de outra recusa do pedido. */
+  /** #130 AC-4 Uma versão nova está sendo escrita por cima de um dossiê pronto. */
+  renewing: boolean;
+  /** #130 O aviso do 409, do 429, de outra recusa do pedido ou da versão nova que falhou. */
   message: string | null;
   busy: boolean;
   request: () => Promise<void>;
@@ -26,17 +28,22 @@ export function requestError(reason: unknown): string {
   return texts.dossier.request.other;
 }
 
+/** #130 Horário ISO em milissegundos. O Postgres manda `+00:00` com microssegundos; o Worker, `Z`: texto não compara. */
+const at = (iso: string | null | undefined): number => (iso ? Date.parse(iso) : Number.NaN);
+
 export function useDossier(accessKey: string, initial: ProposalDossierDto | null | undefined): DossierState {
-  const [dossier, setDossier] = useState(initial);
+  const [dossier, setDossier] = useState(initial?.status === "generating" ? null : initial);
   const [generating, setGenerating] = useState<DossierGeneratingDto | null>(initial?.status === "generating" ? initial : null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // #130 AC-4: num "Gerar de novo", o dossiê pronto anterior só sai quando chega um mais novo que o pedido.
+  // #130 AC-4: quando o pedido foi aceito, para saber se o dossiê pronto que voltou é o novo ou o anterior.
   const since = useRef<string | null>(null);
+  // #130 O pedido em voo: o segundo clique, antes do re-render, não sai.
+  const inFlight = useRef(false);
 
   // #130 A gaveta trocou de proposta (ou a proposta foi relida): começa do que veio.
   useEffect(() => {
-    setDossier(initial);
+    setDossier(initial?.status === "generating" ? null : initial);
     setGenerating(initial?.status === "generating" ? initial : null);
     setMessage(null);
     since.current = null;
@@ -48,28 +55,36 @@ export function useDossier(accessKey: string, initial: ProposalDossierDto | null
     const controller = new AbortController();
     const deadline = Date.now() + DOSSIER_POLL_LIMIT_MS;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const stop = () => {
+      setGenerating(null);
+      since.current = null;
+    };
+    // #130 O prazo vale antes de toda nova leitura, inclusive quando a API segue devolvendo `generating`.
+    const again = () => {
+      if (Date.now() + DOSSIER_POLL_MS > deadline) stop();
+      else timer = setTimeout(tick, DOSSIER_POLL_MS);
+    };
     const tick = async () => {
       try {
         const next = (await approvalApi.proposal(accessKey, controller.signal)).dossier;
         if (controller.signal.aborted) return;
-        const stale = next?.status === "ready" && since.current !== null && next.generatedAt < since.current;
-        if (next?.status === "generating" || (stale && Date.now() < deadline)) {
-          if (next?.status === "generating") setGenerating(next);
-          timer = setTimeout(tick, DOSSIER_POLL_MS);
+        if (next?.status === "generating") {
+          setGenerating(next);
+          again();
           return;
         }
+        // #130 AC-4 Parou de gerar e o pronto é mais velho que o pedido: a versão nova falhou, a anterior fica.
+        const requested = since.current;
+        const failedRenew = requested !== null && next?.status === "ready" && at(next.generatedAt) < at(requested);
         setDossier(next);
-        setGenerating(null);
-        setMessage(null);
-        since.current = null;
+        setMessage(failedRenew ? texts.dossier.renewFailed : null);
+        stop();
       } catch {
         // #130 Uma leitura que falhou não encerra a espera; o teto é que encerra.
-        if (controller.signal.aborted) return;
-        if (Date.now() < deadline) timer = setTimeout(tick, DOSSIER_POLL_MS);
-        else setGenerating(null);
+        if (!controller.signal.aborted) again();
       }
     };
-    timer = setTimeout(tick, DOSSIER_POLL_MS);
+    again();
     return () => {
       controller.abort();
       if (timer !== undefined) clearTimeout(timer);
@@ -77,6 +92,8 @@ export function useDossier(accessKey: string, initial: ProposalDossierDto | null
   }, [polling, accessKey]);
 
   const request = useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setMessage(null);
     try {
@@ -85,14 +102,17 @@ export function useDossier(accessKey: string, initial: ProposalDossierDto | null
       setGenerating(started);
     } catch (reason) {
       setMessage(requestError(reason));
-      // #130 409: o Claude já está escrevendo; a gaveta fica em Gerando e espera a resposta.
+      // #130 409: o Claude já está escrevendo; a gaveta fica em Gerando, sem apagar um Gerando que já tem quem e quando.
       if (reason instanceof ApiError && reason.status === 409) {
-        setGenerating({ status: "generating", trigger: "on_demand", requestedBy: "", requestedAt: "" });
+        setGenerating((current) => current ?? { status: "generating", trigger: "on_demand", requestedBy: "", requestedAt: "" });
       }
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }, [accessKey]);
 
-  return { dossier: generating ?? dossier, message, busy, request };
+  // #130 AC-4 Com um dossiê pronto na tela, a versão nova é escrita por trás: o pronto fica até o novo chegar.
+  const renewing = generating !== null && dossier?.status === "ready";
+  return { dossier: renewing ? dossier : (generating ?? dossier), renewing, message, busy, request };
 }

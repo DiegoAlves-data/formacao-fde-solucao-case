@@ -113,6 +113,14 @@ describe("#130 os estados do bloco na gaveta", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 
+  it("#38 Gerando pelo evento: começou quando a nota chegou, sem botão", () => {
+    render(
+      <Dossier dossier={{ status: "generating", trigger: "event", requestedBy: "claude", requestedAt: "2026-11-15T13:14:00Z" }} onRequest={noop} />,
+    );
+    expect(screen.getByText("Começou quando a nota chegou, às 10h14")).toBeTruthy();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
   it("#130 Pronto: o conteúdo, a hora em que o Claude escreveu e Gerar de novo", () => {
     render(<Dossier dossier={READY} onRequest={noop} />);
     expect(screen.getByText(READY.summary)).toBeTruthy();

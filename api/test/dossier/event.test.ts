@@ -10,6 +10,8 @@ import { SupabaseRest } from '../../src/connectors/supabase-rest.js';
 import { generateOnEvent } from '../../src/dossier/event.js';
 import { readDossier } from '../../src/dossier/read-dossier.js';
 import { SupabaseDossierSource } from '../../src/dossier/source.js';
+import { busyKeys } from '../../src/dossier/event.js';
+import { SupabaseDossierRequests } from '../../src/dossier/requests.js';
 import { FakePostgrest } from '../support/fake-postgrest.js';
 import { KIT_ACCESS_KEY, kitCase, kitGoodRaw } from './kit-case.js';
 
@@ -17,7 +19,7 @@ const answering = (output: unknown) => vi.fn(async () => output) as unknown as A
 
 async function setup(suggestions: Record<string, unknown>[] = []) {
   const { invoice, ctx, tables } = await kitCase();
-  const fake = new FakePostgrest({ ...tables, claude_suggestions: suggestions });
+  const fake = new FakePostgrest({ ...tables, claude_suggestions: suggestions, dossier_requests: [] });
   const rest = new SupabaseRest({ url: 'https://fake.supabase.co', secretKey: 'sb_secret_fake', fetch: fake.fetch });
   const db = restDb(rest);
   const context = vi.fn(async () => ctx);
@@ -29,7 +31,8 @@ async function setup(suggestions: Record<string, unknown>[] = []) {
       source: new SupabaseDossierSource(rest),
     });
   const run = (ask: Ask) => generateOnEvent({ db, ask, context }, invoice);
-  return { invoice, ctx, fake, db, context, run, gaveta };
+  const requests = new SupabaseDossierRequests(rest);
+  return { invoice, ctx, fake, db, context, run, gaveta, requests };
 }
 
 const sugestoes = (fake: FakePostgrest) => fake.tables.get('claude_suggestions') ?? [];
@@ -188,5 +191,42 @@ describe('#38 do evento à gaveta, sem rodada agendada', () => {
       upsert: vi.fn(async () => { throw new Error('banco fora do ar'); }),
     };
     await expect(generateOnEvent({ db, ask: answering(kitGoodRaw()), context: async () => ctx }, invoice)).resolves.toBeUndefined();
+  });
+});
+
+describe('#130 #38 AC-1 o evento abre o pedido que a gaveta lê como Gerando', () => {
+  it('abre a linha com trigger event e requested_by claude antes do Claude, e a fecha no fim', async () => {
+    const { invoice, db, context, requests, fake } = await setup();
+    let during: unknown[] = [];
+    const ask = vi.fn(async () => {
+      during = (fake.tables.get('dossier_requests') ?? []).map((r) => ({ ...r }));
+      return kitGoodRaw();
+    }) as unknown as Ask;
+    await generateOnEvent({ db, ask, context, requests }, invoice);
+    expect(during).toEqual([expect.objectContaining({ input_key: KIT_ACCESS_KEY, requested_by: 'claude', trigger: 'event', finished_at: null })]);
+    const after = fake.tables.get('dossier_requests') ?? [];
+    expect(after).toHaveLength(1);
+    expect(after[0]?.finished_at).not.toBeNull();
+  });
+
+  it('fecha o pedido mesmo quando o Claude falha', async () => {
+    const { invoice, db, context, requests, fake } = await setup();
+    const ask = vi.fn(async () => {
+      throw new ClaudeError('timeout', 'prazo');
+    }) as unknown as Ask;
+    await generateOnEvent({ db, ask, context, requests, log: () => {} }, invoice);
+    expect((fake.tables.get('dossier_requests') ?? [])[0]?.finished_at).not.toBeNull();
+  });
+
+  it('#130 nota com pedido da gaveta aberto entra em busyKeys e o evento não abre outro pedido', async () => {
+    const { invoice, db, context, requests, fake } = await setup();
+    const now = new Date();
+    await requests.open({ input_key: KIT_ACCESS_KEY, requested_by: 'ana@exemplo.com', requested_at: now.toISOString(), trigger: 'on_demand' });
+    const busy = await busyKeys(requests, now);
+    expect(busy.has(KIT_ACCESS_KEY)).toBe(true);
+    const ask = answering(kitGoodRaw());
+    await generateOnEvent({ db, ask, context, requests, busy }, invoice);
+    expect(ask).not.toHaveBeenCalled();
+    expect(fake.tables.get('dossier_requests')).toHaveLength(1);
   });
 });

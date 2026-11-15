@@ -463,6 +463,11 @@ export const texts = {
     // #130 Os estados da gaveta, como no wireframe da issue.
     generating: "O Claude está lendo a nota, a ordem e o cadastro…",
     requestedAt: (time: string) => `Pedido por você às ${time}`,
+    // #38 O dossiê disparado pelo evento: ninguém pediu, começou quando a nota chegou.
+    startedAt: (time: string) => `Começou quando a nota chegou, às ${time}`,
+    // #130 AC-4 "Gerar de novo": o anterior fica na tela até o novo ficar pronto.
+    renewing: "✦ O Claude está escrevendo uma versão nova. Esta continua valendo até lá.",
+    renewFailed: "O Claude não conseguiu escrever a versão nova. Esta continua valendo.",
     writtenAt: (time: string) => `Escrito pelo Claude às ${time}. Os números vêm do banco.`,
     notYet: "Esta proposta ainda não tem dossiê. O Claude lê a nota, a ordem e o cadastro e explica o que diverge. Quem decide é você.",
     ask: "✦ Pedir ao Claude",

@@ -40,6 +40,8 @@ export interface DossierProps {
   /** #130 O aviso do pedido recusado (409, 429). */
   message?: string | null;
   busy?: boolean;
+  /** #130 AC-4 Uma versão nova está sendo escrita: o dossiê pronto fica na tela, com o aviso, e o botão desabilitado. */
+  renewing?: boolean;
 }
 
 /** #130 A moldura de IA: o cabeçalho é sempre "Dossiê do Claude" com o selo. */
@@ -73,7 +75,7 @@ function Message({ text }: { text?: string | null }): JSX.Element | null {
  * exceção com as evidências; não decide nada: a ação, o nível e o valor vêm da regra. Sem dossiê
  * pronto, a gaveta avisa e a decisão segue pela conferência.
  */
-export function Dossier({ dossier, onRequest, message, busy }: DossierProps): JSX.Element {
+export function Dossier({ dossier, onRequest, message, busy, renewing }: DossierProps): JSX.Element {
   // #130 Gerando: o brilho nas linhas e quem pediu, e quando.
   if (dossier?.status === "generating") {
     const time = clockTime(dossier.requestedAt);
@@ -91,7 +93,7 @@ export function Dossier({ dossier, onRequest, message, busy }: DossierProps): JS
         </div>
         {time ? (
           <Text variant="body-xs" color="var(--content-secondary)">
-            {texts.dossier.requestedAt(time)}
+            {dossier.trigger === "event" ? texts.dossier.startedAt(time) : texts.dossier.requestedAt(time)}
           </Text>
         ) : null}
         <Message text={message} />
@@ -129,7 +131,7 @@ export function Dossier({ dossier, onRequest, message, busy }: DossierProps): JS
   const divergences = Array.isArray(dossier.divergences) ? dossier.divergences : [];
   const written = clockTime(dossier.generatedAt);
   return (
-    <AiPanel>
+    <AiPanel live={renewing}>
       <Text variant="body-sm" color="var(--content-primary)">
         {dossier.summary}
       </Text>
@@ -176,8 +178,8 @@ export function Dossier({ dossier, onRequest, message, busy }: DossierProps): JS
           {texts.dossier.writtenAt(written)}
         </Text>
       ) : null}
-      <Message text={message} />
-      <RequestButton label={texts.dossier.again} onRequest={onRequest} busy={busy} />
+      {renewing ? <p role="status">{texts.dossier.renewing}</p> : <Message text={message} />}
+      <RequestButton label={texts.dossier.again} onRequest={onRequest} busy={busy || renewing} />
     </AiPanel>
   );
 }

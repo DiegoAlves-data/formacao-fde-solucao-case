@@ -155,7 +155,7 @@ export function ProposalPanel({
         )}
       </Block>
       {proposal.dockAction.kind === "receber_parcial" ? <PartialItems proposal={proposal} lines={proposal.dockAction.lines} /> : null}
-      <Dossier dossier={dossier.dossier} onRequest={() => void dossier.request()} message={dossier.message} busy={dossier.busy} />
+      <Dossier dossier={dossier.dossier} onRequest={() => void dossier.request()} message={dossier.message} busy={dossier.busy} renewing={dossier.renewing} />
       <ProposalTimeline steps={proposal.timeline ?? []} />
       {decided ?? proposal.approval ? (
         <Alert

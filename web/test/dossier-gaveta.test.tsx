@@ -130,19 +130,59 @@ describe("#130 pedir o dossiê na gaveta", () => {
     expect(calls.filter((c) => c.method === "GET")).toHaveLength(3);
   });
 
-  it("#130 AC-4 Gerar de novo mantém Gerando até chegar um dossiê mais novo que o pedido", async () => {
-    replies[POST] = [{ status: 202, body: { status: "generating", trigger: "on_demand", requested_by: "a", requested_at: "2026-11-15T14:00:00Z" } }];
-    const NEWER = { ...READY, summary: "Dossiê novo.", generatedAt: "2026-11-15T14:00:10Z" } as ProposalDossierDto;
+  it("#130 AC-4 Gerar de novo mantém o dossiê anterior na tela, com o aviso, até o novo ficar pronto", async () => {
+    replies[POST] = [{ status: 202, body: { status: "generating", trigger: "on_demand", requested_by: "a", requested_at: "2026-11-15T14:00:00.000Z" } }];
+    const NEWER = { ...READY, summary: "Dossiê novo.", generatedAt: "2026-11-15T14:00:10.123456+00:00" } as ProposalDossierDto;
     replies[GET] = [
-      { status: 200, body: proposal(READY) },
+      { status: 200, body: proposal({ status: "generating", trigger: "on_demand", requestedBy: "a", requestedAt: "2026-11-15T14:00:00.000Z" }) },
       { status: 200, body: proposal(NEWER) },
     ];
     render(<ProposalPanel proposal={proposal(READY)} />);
     fireEvent.click(screen.getByRole("button", { name: "↻ Gerar de novo" }));
     await flush();
+    expect(screen.getByText("A nota cobra 72 UN; a ordem pediu 6 CX.")).toBeTruthy();
+    expect(screen.getByText(/escrevendo uma versão nova/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "↻ Gerar de novo" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByText("✦ O Claude está lendo a nota, a ordem e o cadastro…")).toBeNull();
     await wait(3_000);
-    expect(screen.getByText("✦ O Claude está lendo a nota, a ordem e o cadastro…")).toBeTruthy();
+    expect(screen.getByText("A nota cobra 72 UN; a ordem pediu 6 CX.")).toBeTruthy();
     await wait(3_000);
     expect(screen.getByText("Dossiê novo.")).toBeTruthy();
+  });
+
+  it("#130 AC-4 a versão nova falhou (o pronto voltou mais velho que o pedido): avisa na hora e mantém o anterior", async () => {
+    replies[POST] = [{ status: 202, body: { status: "generating", trigger: "on_demand", requested_by: "a", requested_at: "2026-11-15T14:00:00.000Z" } }];
+    replies[GET] = [{ status: 200, body: proposal(READY) }];
+    render(<ProposalPanel proposal={proposal(READY)} />);
+    fireEvent.click(screen.getByRole("button", { name: "↻ Gerar de novo" }));
+    await flush();
+    await wait(3_000);
+    expect(screen.getByText("O Claude não conseguiu escrever a versão nova. Esta continua valendo.")).toBeTruthy();
+    expect(screen.getByText("A nota cobra 72 UN; a ordem pediu 6 CX.")).toBeTruthy();
+    const gets = calls.filter((c) => c.method === "GET").length;
+    await wait(10_000);
+    expect(calls.filter((c) => c.method === "GET")).toHaveLength(gets);
+  });
+
+  it("#130 a releitura para no teto de 90 s mesmo com a API ainda em generating", async () => {
+    const gen = { status: "generating", trigger: "event", requestedBy: "claude", requestedAt: "2026-11-15T13:14:00Z" } as ProposalDossierDto;
+    replies[GET] = [{ status: 200, body: proposal(gen) }];
+    render(<ProposalPanel proposal={proposal(gen)} />);
+    await wait(120_000);
+    const gets = calls.filter((c) => c.method === "GET").length;
+    expect(gets).toBeLessThanOrEqual(30);
+    await wait(30_000);
+    expect(calls.filter((c) => c.method === "GET")).toHaveLength(gets);
+  });
+
+  it("#130 duplo clique manda um pedido só, e o Gerando guarda quem pediu e quando", async () => {
+    replies[POST] = [{ status: 202, body: { status: "generating", trigger: "on_demand", requested_by: "a", requested_at: "2026-11-15T13:14:00Z" } }];
+    render(<ProposalPanel proposal={proposal(PENDING)} />);
+    const button = screen.getByRole("button", { name: "✦ Pedir ao Claude" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await flush();
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+    expect(screen.getByText("Pedido por você às 10h14")).toBeTruthy();
   });
 });

@@ -39,7 +39,8 @@ export function dossierReadFailed(): DossierFieldUnavailable {
  */
 export type DossierFieldGenerating = {
   readonly status: 'generating';
-  readonly trigger: 'on_demand';
+  /** #130 #38 `event`: o Claude começou quando a nota chegou; `on_demand`: a pessoa pediu na gaveta. */
+  readonly trigger: 'event' | 'on_demand';
   readonly requestedBy: string;
   readonly requestedAt: string;
 };
@@ -48,8 +49,12 @@ export type DossierFieldGenerating = {
 export type ProposalDossierField = DossierField | DossierFieldGenerating;
 
 /** #130 O pedido da gaveta em andamento. */
-export function dossierGenerating(requestedBy: string, requestedAt: string): DossierFieldGenerating {
-  return { status: 'generating', trigger: 'on_demand', requestedBy, requestedAt };
+export function dossierGenerating(
+  requestedBy: string,
+  requestedAt: string,
+  trigger: DossierFieldGenerating['trigger'] = 'on_demand',
+): DossierFieldGenerating {
+  return { status: 'generating', trigger, requestedBy, requestedAt };
 }
 
 /** #128: o nome do glossário vem do catálogo da API, para a tela não traduzir código. */

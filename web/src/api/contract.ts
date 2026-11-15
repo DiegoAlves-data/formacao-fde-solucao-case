@@ -37,7 +37,8 @@ export type {
 /** #130 O dossiê pedido na gaveta, ainda em geração (`api/src/dossier/proposal-field.ts`). */
 export interface DossierGeneratingDto {
   status: "generating";
-  trigger: "on_demand";
+  /** #38 `event`: começou quando a nota chegou; #130 `on_demand`: a pessoa pediu na gaveta. */
+  trigger: "event" | "on_demand";
   requestedBy: string;
   requestedAt: string;
 }

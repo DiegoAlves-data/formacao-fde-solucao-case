@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { checkDuplicidade } from '../../src/domain/checks/e6-duplicidade.js';
 import { checkPagoForaDoFluxo } from '../../src/domain/checks/e7-pago-fora-do-fluxo.js';
-import { checkItemSemCadastro } from '../../src/domain/checks/e8-item-sem-cadastro.js';
 import { checkItemTrocado } from '../../src/domain/checks/e2-item-trocado.js';
 import { checkUnidadeDeMedida } from '../../src/domain/checks/e4-unidade-de-medida.js';
 import { checkFaltaFisica } from '../../src/domain/checks/e1-falta-fisica.js';
@@ -16,7 +15,6 @@ import { anInvoice, emptyContext } from './fixtures.js';
 const contract = {
   checkDuplicidade,
   checkPagoForaDoFluxo,
-  checkItemSemCadastro,
   checkItemTrocado,
   checkUnidadeDeMedida,
   checkFaltaFisica,

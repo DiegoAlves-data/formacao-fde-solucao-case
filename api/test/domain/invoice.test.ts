@@ -68,8 +68,8 @@ describe('Invoice', () => {
 
   it('AC-2: com as verificações vazias, toda nota sai MATCH', () => {
     const invoice = anInvoice();
-    // #65: a E5 já está preenchida; a ordem que a nota cita existe em Compras, então ela não acusa.
-    invoice.check(emptyContext({ purchaseOrders: [order('OC-100')] }));
+    // #66 As verificações reais já acham divergência (a E8 desde a #35); aqui elas vêm vazias de propósito.
+    invoice.check(emptyContext(), CHECKS.map((c) => ({ id: c.id, run: () => [] })));
     expect(invoice.state).toBe('conferida');
     expect(invoice.classification).toBe('MATCH');
   });

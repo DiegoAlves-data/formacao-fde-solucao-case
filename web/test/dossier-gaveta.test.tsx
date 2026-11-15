@@ -175,6 +175,16 @@ describe("#130 pedir o dossiê na gaveta", () => {
     expect(calls.filter((c) => c.method === "GET")).toHaveLength(gets);
   });
 
+  it("#130 no teto, com o Claude ainda escrevendo, avisa e não volta calada para Pedir ao Claude", async () => {
+    const gen = { status: "generating", trigger: "on_demand", requestedBy: "a", requestedAt: "2026-11-15T13:14:00Z" } as ProposalDossierDto;
+    replies[GET] = [{ status: 200, body: proposal(gen) }];
+    render(<ProposalPanel proposal={proposal(gen)} />);
+    await wait(120_000);
+    expect(screen.getByText("O Claude ainda está escrevendo; tente de novo em alguns minutos.")).toBeTruthy();
+    expect(screen.getByText("✦ O Claude está lendo a nota, a ordem e o cadastro…")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "✦ Pedir ao Claude" })).toBeNull();
+  });
+
   it("#130 duplo clique manda um pedido só, e o Gerando guarda quem pediu e quando", async () => {
     replies[POST] = [{ status: 202, body: { status: "generating", trigger: "on_demand", requested_by: "a", requested_at: "2026-11-15T13:14:00Z" } }];
     render(<ProposalPanel proposal={proposal(PENDING)} />);

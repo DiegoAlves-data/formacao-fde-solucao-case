@@ -178,7 +178,8 @@ export function Dossier({ dossier, onRequest, message, busy, renewing }: Dossier
           {texts.dossier.writtenAt(written)}
         </Text>
       ) : null}
-      {renewing ? <p role="status">{texts.dossier.renewing}</p> : <Message text={message} />}
+      {renewing ? <p role="status">{texts.dossier.renewing}</p> : null}
+      <Message text={message} />
       <RequestButton label={texts.dossier.again} onRequest={onRequest} busy={busy || renewing} />
     </AiPanel>
   );

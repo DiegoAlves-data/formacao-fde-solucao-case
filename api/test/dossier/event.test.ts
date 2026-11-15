@@ -230,3 +230,15 @@ describe('#130 #38 AC-1 o evento abre o pedido que a gaveta lê como Gerando', (
     expect(fake.tables.get('dossier_requests')).toHaveLength(1);
   });
 });
+
+describe('#130 o fim fecha só o próprio pedido', () => {
+  it('o fim do evento não fecha um pedido da gaveta aberto para a mesma nota', async () => {
+    const { invoice, db, context, requests, fake } = await setup();
+    const drawerId = await requests.open({ input_key: KIT_ACCESS_KEY, requested_by: 'ana@exemplo.com', requested_at: new Date().toISOString(), trigger: 'on_demand' });
+    await generateOnEvent({ db, ask: answering(kitGoodRaw()), context, requests }, invoice);
+    const rows = fake.tables.get('dossier_requests') ?? [];
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.id === drawerId)?.finished_at).toBeNull();
+    expect(rows.find((r) => r.id !== drawerId)?.finished_at).not.toBeNull();
+  });
+});

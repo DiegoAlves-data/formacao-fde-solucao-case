@@ -86,11 +86,11 @@ export async function generateOnEvent(deps: EventDossierDeps, invoice: InvoiceVi
     }
 
     // #130 #38 AC-1 A linha aberta é o que a gaveta lê como "Gerando"; fecha no finally, com sucesso ou não.
-    await deps.requests?.open({ input_key: key, requested_by: 'claude', requested_at: clock().toISOString(), trigger: 'event' });
+    const requestId = await deps.requests?.open({ input_key: key, requested_by: 'claude', requested_at: clock().toISOString(), trigger: 'event' });
     try {
       await callAndStore(deps, invoice, prev, clock, log);
     } finally {
-      await deps.requests?.finish(key, clock());
+      if (requestId !== undefined) await deps.requests?.finish(requestId, clock());
     }
   } catch (error) {
     log(`#38 dossiê do evento da nota ${key} não gravado: ${storedError(error, deps.secrets)}`);

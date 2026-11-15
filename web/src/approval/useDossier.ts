@@ -55,13 +55,19 @@ export function useDossier(accessKey: string, initial: ProposalDossierDto | null
     const controller = new AbortController();
     const deadline = Date.now() + DOSSIER_POLL_LIMIT_MS;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const stop = () => {
+    // #130 Por que a espera acabou: o dossiê voltou (pronto ou falho) ou o teto chegou com o Claude ainda escrevendo.
+    const stop = (why: "done" | "timeout") => {
+      // #130 No teto, a gaveta não volta calada para "Pedir ao Claude": fica em Gerando, com o aviso.
+      if (why === "timeout") {
+        setMessage(texts.dossier.renewTimedOut);
+        return;
+      }
       setGenerating(null);
       since.current = null;
     };
     // #130 O prazo vale antes de toda nova leitura, inclusive quando a API segue devolvendo `generating`.
     const again = () => {
-      if (Date.now() + DOSSIER_POLL_MS > deadline) stop();
+      if (Date.now() + DOSSIER_POLL_MS > deadline) stop("timeout");
       else timer = setTimeout(tick, DOSSIER_POLL_MS);
     };
     const tick = async () => {
@@ -78,7 +84,7 @@ export function useDossier(accessKey: string, initial: ProposalDossierDto | null
         const failedRenew = requested !== null && next?.status === "ready" && at(next.generatedAt) < at(requested);
         setDossier(next);
         setMessage(failedRenew ? texts.dossier.renewFailed : null);
-        stop();
+        stop("done");
       } catch {
         // #130 Uma leitura que falhou não encerra a espera; o teto é que encerra.
         if (!controller.signal.aborted) again();

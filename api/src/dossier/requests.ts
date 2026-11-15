@@ -35,9 +35,12 @@ export interface DossierRequests {
   /** #130 #38 AC-6 Os pedidos ainda abertos de todas as notas, feitos desde `since`: uma leitura só, para o Cron. */
   openSince(since: Date): Promise<DossierRequest[]>;
   /** #130 Registra o pedido aceito. #38: o evento também abre o seu, com trigger `event`. */
-  open(request: Omit<DossierRequest, 'finished_at'>): Promise<void>;
-  /** #130 Fecha os pedidos ainda abertos da nota, com sucesso ou não. */
-  finish(invoiceAccessKey: string, at: Date): Promise<void>;
+  open(request: Omit<DossierRequest, 'finished_at'>): Promise<number>;
+  /**
+   * #130 Fecha o pedido `id`, com sucesso ou não. Pelo id, e não pela chave: o fim do evento não fecha um pedido da
+   * gaveta aberto para a mesma nota (nem o contrário).
+   */
+  finish(id: number, at: Date): Promise<void>;
 }
 
 /** #130 O pedido em andamento da nota, se houver: aberto e com menos de IN_FLIGHT_MS. */
@@ -75,11 +78,17 @@ export class SupabaseDossierRequests implements DossierRequests {
     return parseRows(rows, isRequest, TABLE);
   }
 
-  async open(request: Omit<DossierRequest, 'finished_at'>): Promise<void> {
-    await this.rest.insert(TABLE, [{ ...request, trigger: triggerOf(request as DossierRequest), finished_at: null }], { ignoreDuplicates: false });
+  async open(request: Omit<DossierRequest, 'finished_at'>): Promise<number> {
+    const rows = await this.rest.insert(TABLE, [{ ...request, trigger: triggerOf(request as DossierRequest), finished_at: null }], {
+      ignoreDuplicates: false,
+    });
+    // #130 return=representation: a linha volta com o id da identidade.
+    const id = (rows[0] as { id?: unknown } | undefined)?.id;
+    if (typeof id !== 'number') throw new Error(`${TABLE}: o insert não devolveu o id`);
+    return id;
   }
 
-  async finish(invoiceAccessKey: string, at: Date): Promise<void> {
-    await this.rest.update(TABLE, { input_key: `eq.${invoiceAccessKey}`, finished_at: 'is.null' }, { finished_at: at.toISOString() });
+  async finish(id: number, at: Date): Promise<void> {
+    await this.rest.update(TABLE, { id: `eq.${id}` }, { finished_at: at.toISOString() });
   }
 }

@@ -468,6 +468,8 @@ export const texts = {
     // #130 AC-4 "Gerar de novo": o anterior fica na tela até o novo ficar pronto.
     renewing: "✦ O Claude está escrevendo uma versão nova. Esta continua valendo até lá.",
     renewFailed: "O Claude não conseguiu escrever a versão nova. Esta continua valendo.",
+    // #130 O teto da espera chegou com o Claude ainda em generating.
+    renewTimedOut: "O Claude ainda está escrevendo; tente de novo em alguns minutos.",
     writtenAt: (time: string) => `Escrito pelo Claude às ${time}. Os números vêm do banco.`,
     notYet: "Esta proposta ainda não tem dossiê. O Claude lê a nota, a ordem e o cadastro e explica o que diverge. Quem decide é você.",
     ask: "✦ Pedir ao Claude",

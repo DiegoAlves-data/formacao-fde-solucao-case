@@ -303,11 +303,11 @@ async function requestDossier(deps: ApprovalDeps, key: string, identity: Identit
     return error(429, 'limite', 'Muitos pedidos para esta proposta. Tente de novo em alguns minutos.');
   }
   const requestedAt = now.toISOString();
-  await dossier.requests.open({ input_key: key, requested_by: identity.email, requested_at: requestedAt });
+  const requestId = await dossier.requests.open({ input_key: key, requested_by: identity.email, requested_at: requestedAt });
   defer(
     generateOnDemand(
       { ...dossier.onDemand, requests: dossier.requests, context: dossier.context, now: dossier.now },
-      { invoiceAccessKey: key, invoice: file.invoice, requestedBy: identity.email, requestedAt },
+      { invoiceAccessKey: key, invoice: file.invoice, requestedBy: identity.email, requestedAt, requestId },
     ),
   );
   return Response.json(

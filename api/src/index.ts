@@ -27,8 +27,9 @@ export function createWorker(deps: RouterDeps): Worker {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
       return route(request, env, deps, ctx);
     },
-    async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
-      await tick(controller, env);
+    async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+      // #38 O dossiê do evento roda fora da resposta do Cron, pelo waitUntil do Worker (AC-1, AC-5).
+      await tick(controller, env, (work) => ctx.waitUntil(work));
     },
   } satisfies ExportedHandler<Env>;
 }

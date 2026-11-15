@@ -1,21 +1,38 @@
 import { listDescriptionSuggestions, storedDescriptionSuggester } from "../connectors/claude-suggestions";
 import { blockDuplicateTitles } from "../connectors/duplicate-settler";
 import { runClaudeRound } from "../claude/cron";
+import { credentialsFromEnv } from "../claude/client";
+import { restDb } from "../claude/db";
 import { supabaseConnectors } from "../connectors/supabase-connectors";
+import type { CaptureDeps } from "./capture";
 import { SupabaseRest, SupabaseRestError } from "../connectors/supabase-rest";
 import type { RegistryCorrectionOutbox } from "../connectors/ports";
 import type { DescriptionSuggester } from "../domain/description-match";
+import type { InvoiceView } from "../domain/invoice";
 import type { Env } from "../env";
 import { captureInvoices } from "./capture";
 import { findUnreconciledReceipts } from "./unreconciled-receipts";
 import { proposeChecked } from "../approval/propose-checked";
 import { SupabaseApprovalStore } from "../approval/supabase-store";
 import { publishDecidedDockActions, publishDecidedStoreActions } from "../dock/publish-decided";
+import { loadDossierContext } from "../dossier/context";
+import { generateOnEvent } from "../dossier/event";
+import { onDemandAsk } from "../dossier/on-demand";
 import { NO_FIGURES, recordRun, type RunFigures } from "../automation/runs";
 import { lastDaysUtc, publishApprovedUnregistered } from "./publish-approved-e8";
 
 /** #66 A janela, em dias, das decisões que o Cron manda ao Cadastro; ver `lastDaysUtc`. */
 const PUBLISH_WINDOW_DAYS = 7;
+
+/**
+ * #38 Teto de disparos do dossiê por rodada, no mesmo espírito do CRON_LIMIT de claude/cron.ts: o Worker tem um
+ * teto de subrequests por invocação, e a captura (o caminho crítico) não pode disputar com o dossiê. O que
+ * passar do teto não fica esquecido: a proposta abre na gaveta sem dossiê, e a pessoa pede pelo botão (#130).
+ */
+export const DOSSIER_EVENT_LIMIT = 5;
+
+/** #38 Agenda o trabalho que segue depois da resposta do Cron (o waitUntil do Worker), como em http/approval.ts. */
+export type Defer = (work: Promise<unknown>) => void;
 
 /** #174 O que uma rodada fez, para a reconferência devolver. Nulo quando a rodada foi pulada. */
 export interface TickSummary {
@@ -26,8 +43,16 @@ export interface TickSummary {
   proposed: number;
 }
 
-/** Execução agendada: captura e confere as notas (#59). Registra uma linha, sem dado sensível. */
-export async function tick(controller: Pick<ScheduledController, "cron">, env: Env): Promise<TickSummary | null> {
+/**
+ * Execução agendada: captura e confere as notas (#59). Registra uma linha, sem dado sensível.
+ * #38 `defer` agenda o que roda depois da resposta do Cron (o dossiê do evento): o padrão é só disparar sem
+ * esperar (como em http/approval.ts); quem chama de um Worker real passa `(work) => ctx.waitUntil(work)`.
+ */
+export async function tick(
+  controller: Pick<ScheduledController, "cron">,
+  env: Env,
+  defer: Defer = (work) => void work,
+): Promise<TickSummary | null> {
   const startedAt = new Date();
   const url = env.BARTE_ACADEMY_SUPABASE_URL;
   const secretKey = env.BARTE_ACADEMY_SUPABASE_SECRET_KEY;
@@ -37,7 +62,7 @@ export async function tick(controller: Pick<ScheduledController, "cron">, env: E
   }
   const rest = new SupabaseRest({ url, secretKey });
   try {
-    const { summary, figures } = await runRound(controller, env, rest);
+    const { summary, figures } = await runRound(controller, env, rest, defer);
     await recordRunSafely(rest, { startedAt, status: "ok", figures });
     return summary;
   } catch (error) {
@@ -68,6 +93,7 @@ async function runRound(
   controller: Pick<ScheduledController, "cron">,
   env: Env,
   rest: SupabaseRest,
+  defer: Defer,
 ): Promise<{ summary: TickSummary; figures: RunFigures }> {
   const { captureDeps, registryCorrections } = supabaseConnectors(rest);
   const descriptions = await storedSuggestions(rest);
@@ -80,6 +106,9 @@ async function runRound(
     registry: captureDeps.registry,
     wms: captureDeps.wms,
   });
+  // #38 AC-1: a proposta que acabou de ir para uma pessoa nesta rodada dispara o dossiê, fora da resposta
+  // do Cron. Não é uma tarefa do laço (#66/#171): não há rodada agendada relendo o estado da tabela.
+  dispatchDossierEvents(env, restDb(rest), captureDeps, proposals.awaitingApproval, defer);
   const cadastroE8 = await publishApproved(rest, registryCorrections);
   // #43 AC-1 O que a regra aprovou agora (e o que falhou na hora da aprovação) vai para a doca.
   const dock = await publishDock(rest);
@@ -107,6 +136,30 @@ async function runRound(
     duplicatesBlocked: duplicates.blocked,
   };
   return { summary, figures };
+}
+
+/**
+ * #38 AC-1: dispara o agente do dossiê para cada proposta que esta rodada acabou de encaminhar a uma pessoa,
+ * fora da resposta do Cron (`defer`). AC-5: sem credencial do Claude no Worker, não dispara nada — a proposta
+ * segue sem dossiê e a regra decide sozinha. Teto por rodada (DOSSIER_EVENT_LIMIT): o resto fica sem dossiê
+ * automático e a pessoa pede pelo botão na gaveta (#130), nunca lido daqui de novo numa rodada futura.
+ */
+function dispatchDossierEvents(
+  env: Env,
+  db: ReturnType<typeof restDb>,
+  captureDeps: CaptureDeps,
+  invoices: readonly InvoiceView[],
+  defer: Defer,
+): void {
+  if (invoices.length === 0) return;
+  const credentials = credentialsFromEnv(env);
+  if (!credentials) return;
+  const ask = onDemandAsk(credentials);
+  const secret = credentials.kind === 'api-key' ? credentials.apiKey : credentials.token;
+  const secrets = [secret, env.BARTE_ACADEMY_SUPABASE_SECRET_KEY ?? ''];
+  for (const invoice of invoices.slice(0, DOSSIER_EVENT_LIMIT)) {
+    defer(generateOnEvent({ db, ask, secrets, context: (key) => loadDossierContext(captureDeps, key) }, invoice));
+  }
 }
 
 /**

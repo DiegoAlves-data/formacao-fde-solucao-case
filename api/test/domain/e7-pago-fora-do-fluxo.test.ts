@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CHECKS,
   Divergence,
+  DomainError,
   Invoice,
   Money,
   Quantity,
@@ -10,7 +11,7 @@ import {
   type Payment,
 } from '../../src/domain/index.js';
 import {
-  JANELA_DO_PAGAMENTO_FORA_DO_FLUXO_EM_DIAS, // ADR-002
+  OUT_OF_FLOW_PAYMENT_WINDOW_DAYS,
   checkPagoForaDoFluxo, // ADR-002
 } from '../../src/domain/checks/e7-pago-fora-do-fluxo.js';
 import { emptyContext } from './fixtures.js';
@@ -19,7 +20,7 @@ import { emptyContext } from './fixtures.js';
 
 type InvoiceArgs = { supplierId: string; store: string; issuedOn: string; total: Money };
 
-/** Nota sem pedido, como a compra emergencial da loja chega na base do kit. */
+/** #64: nota sem pedido, como a compra emergencial da loja chega na base do kit. */
 const aLateInvoice = ({ supplierId, store, issuedOn, total }: InvoiceArgs): Invoice =>
   Invoice.receive({
     accessKey: `NFE-${supplierId}-${store}-${issuedOn}`,
@@ -43,7 +44,7 @@ const aLateInvoice = ({ supplierId, store, issuedOn, total }: InvoiceArgs): Invo
     total,
   });
 
-/** O pagamento como o conector do banco o entrega: reais com casas decimais. */
+/** #64: o pagamento como o conector do banco o entrega: reais com casas decimais. */
 const aPayment = (overrides: Partial<Payment> & { reais?: number } = {}): Payment => {
   const { reais = 3430.0, ...rest } = overrides;
   return {
@@ -59,7 +60,7 @@ const aPayment = (overrides: Partial<Payment> & { reais?: number } = {}): Paymen
   };
 };
 
-const notaF09 = (): Invoice =>
+const f09Invoice = (): Invoice =>
   aLateInvoice({ supplierId: 'F09', store: 'LJ-025', issuedOn: '2026-11-09', total: Money.ofCents(343000) });
 
 const frozen = (ctx: CheckContext): CheckContext => {
@@ -72,7 +73,7 @@ describe('E7 — pago fora do fluxo (história #33)', () => {
     it('AC-1 (regra 2): PG-5301 do kit, F09 / LJ-025, 7 dias antes da nota, mesmo valor → E7', () => {
       const ctx = emptyContext({ payments: [aPayment()] });
 
-      const result = checkPagoForaDoFluxo(notaF09(), ctx);
+      const result = checkPagoForaDoFluxo(f09Invoice(), ctx);
 
       expect(result).toHaveLength(1);
       expect(result[0]).toBeInstanceOf(Divergence);
@@ -81,7 +82,7 @@ describe('E7 — pago fora do fluxo (história #33)', () => {
     });
 
     it('AC-1 (regra 2): PG-5325 do kit, F02 / LJ-009, 8 dias antes (o maior intervalo do kit) → E7', () => {
-      const nota = aLateInvoice({
+      const invoice = aLateInvoice({
         supplierId: 'F02',
         store: 'LJ-009',
         issuedOn: '2026-11-09',
@@ -95,81 +96,81 @@ describe('E7 — pago fora do fluxo (história #33)', () => {
         reais: 2333.24,
       });
 
-      const result = checkPagoForaDoFluxo(nota, emptyContext({ payments: [payment] }));
+      const result = checkPagoForaDoFluxo(invoice, emptyContext({ payments: [payment] }));
 
       expect(result.map((d) => d.classification)).toEqual(['E7']);
       expect(result[0]?.evidence[0]?.reference).toBe('PG-5325');
     });
 
     it('AC-1 (regra 2): sem pagamento nenhum → []', () => {
-      expect(checkPagoForaDoFluxo(notaF09(), emptyContext())).toEqual([]);
+      expect(checkPagoForaDoFluxo(f09Invoice(), emptyContext())).toEqual([]);
     });
   });
 
   describe('AC-1: o que não é pago fora do fluxo', () => {
     it('AC-1 (regra 2): fornecedor diferente → []', () => {
       const ctx = emptyContext({ payments: [aPayment({ supplierId: 'F10' })] });
-      expect(checkPagoForaDoFluxo(notaF09(), ctx)).toEqual([]);
+      expect(checkPagoForaDoFluxo(f09Invoice(), ctx)).toEqual([]);
     });
 
     it('AC-1 (regra 2): destino diferente → []', () => {
       const ctx = emptyContext({ payments: [aPayment({ store: 'LJ-026' })] });
-      expect(checkPagoForaDoFluxo(notaF09(), ctx)).toEqual([]);
+      expect(checkPagoForaDoFluxo(f09Invoice(), ctx)).toEqual([]);
     });
 
     it('AC-1 (regra 2): valor diferente em 1 centavo → []', () => {
       const ctx = emptyContext({ payments: [aPayment({ reais: 3430.01 }), aPayment({ id: 'PG-2', reais: 3429.99 })] });
-      expect(checkPagoForaDoFluxo(notaF09(), ctx)).toEqual([]);
+      expect(checkPagoForaDoFluxo(f09Invoice(), ctx)).toEqual([]);
     });
 
     it('AC-1 (regra 2): pagamento depois da emissão → []', () => {
       const ctx = emptyContext({ payments: [aPayment({ paidOn: '2026-11-10' })] });
-      expect(checkPagoForaDoFluxo(notaF09(), ctx)).toEqual([]);
+      expect(checkPagoForaDoFluxo(f09Invoice(), ctx)).toEqual([]);
     });
 
     it('AC-1 (regra 2): pagamento a 31 dias da emissão, fora da janela → []', () => {
       const ctx = emptyContext({ payments: [aPayment({ paidOn: '2026-10-09' })] });
-      expect(checkPagoForaDoFluxo(notaF09(), ctx)).toEqual([]);
+      expect(checkPagoForaDoFluxo(f09Invoice(), ctx)).toEqual([]);
     });
 
     it('AC-1 (regra 2): pagamento que já tem título no contas a pagar → []', () => {
       const ctx = emptyContext({
         payments: [aPayment({ invoiceAccessKey: '35261100000000000000550010000099991000099999' })],
       });
-      expect(checkPagoForaDoFluxo(notaF09(), ctx)).toEqual([]);
+      expect(checkPagoForaDoFluxo(f09Invoice(), ctx)).toEqual([]);
     });
   });
 
   describe('AC-1: a janela do pagamento', () => {
-    it(`AC-1 (regra 2): a janela é de ${JANELA_DO_PAGAMENTO_FORA_DO_FLUXO_EM_DIAS} dias`, () => {
-      expect(JANELA_DO_PAGAMENTO_FORA_DO_FLUXO_EM_DIAS).toBe(30);
+    it(`AC-1 (regra 2): a janela é de ${OUT_OF_FLOW_PAYMENT_WINDOW_DAYS} dias`, () => {
+      expect(OUT_OF_FLOW_PAYMENT_WINDOW_DAYS).toBe(30);
     });
 
     it('AC-1 (regra 2): pagamento exatamente 30 dias antes da emissão → E7', () => {
       const ctx = emptyContext({ payments: [aPayment({ paidOn: '2026-10-10' })] });
-      expect(checkPagoForaDoFluxo(notaF09(), ctx).map((d) => d.classification)).toEqual(['E7']);
+      expect(checkPagoForaDoFluxo(f09Invoice(), ctx).map((d) => d.classification)).toEqual(['E7']);
     });
 
     it('AC-1 (regra 2): pagamento no mesmo dia da emissão → E7', () => {
       const ctx = emptyContext({ payments: [aPayment({ paidOn: '2026-11-09' })] });
-      expect(checkPagoForaDoFluxo(notaF09(), ctx).map((d) => d.classification)).toEqual(['E7']);
+      expect(checkPagoForaDoFluxo(f09Invoice(), ctx).map((d) => d.classification)).toEqual(['E7']);
     });
 
     it('AC-1 (regra 2): a janela atravessa a virada do mês por dias corridos', () => {
-      const nota = aLateInvoice({
+      const invoice = aLateInvoice({
         supplierId: 'F09',
         store: 'LJ-025',
         issuedOn: '2026-03-01',
         total: Money.ofCents(343000),
       });
       const ctx = emptyContext({ payments: [aPayment({ paidOn: '2026-01-30' })] });
-      expect(checkPagoForaDoFluxo(nota, ctx).map((d) => d.classification)).toEqual(['E7']);
+      expect(checkPagoForaDoFluxo(invoice, ctx).map((d) => d.classification)).toEqual(['E7']);
     });
   });
 
   describe('AC-2 (regra 6): a evidência é o vínculo da nota ao pagamento', () => {
     it('AC-2 (regra 6): cita o banco e o pagamento, com valor, data, forma, origem e "sem título"', () => {
-      const [divergence] = checkPagoForaDoFluxo(notaF09(), emptyContext({ payments: [aPayment()] }));
+      const [divergence] = checkPagoForaDoFluxo(f09Invoice(), emptyContext({ payments: [aPayment()] }));
 
       expect(divergence?.evidence).toHaveLength(1);
       const [evidence] = divergence?.evidence ?? [];
@@ -188,7 +189,7 @@ describe('E7 — pago fora do fluxo (história #33)', () => {
         payments: [aPayment({ id: 'PG-A', paidOn: '2026-10-20' }), aPayment({ id: 'PG-B', paidOn: '2026-11-05' })],
       });
 
-      const result = checkPagoForaDoFluxo(notaF09(), ctx);
+      const result = checkPagoForaDoFluxo(f09Invoice(), ctx);
 
       expect(result).toHaveLength(1);
       expect(result[0]?.evidence.map((e) => e.reference)).toEqual(['PG-B']);
@@ -199,7 +200,7 @@ describe('E7 — pago fora do fluxo (história #33)', () => {
       const a = aPayment({ id: 'PG-1', paidOn: '2026-11-05' });
 
       for (const payments of [[z, a], [a, z]]) {
-        const result = checkPagoForaDoFluxo(notaF09(), emptyContext({ payments }));
+        const result = checkPagoForaDoFluxo(f09Invoice(), emptyContext({ payments }));
         expect(result).toHaveLength(1);
         expect(result[0]?.evidence.map((e) => e.reference)).toEqual(['PG-1']);
       }
@@ -212,19 +213,19 @@ describe('E7 — pago fora do fluxo (história #33)', () => {
           aPayment({ id: 'PG-SEM', paidOn: '2026-11-01' }),
         ],
       });
-      const result = checkPagoForaDoFluxo(notaF09(), ctx);
+      const result = checkPagoForaDoFluxo(f09Invoice(), ctx);
       expect(result.map((d) => d.evidence[0]?.reference)).toEqual(['PG-SEM']);
     });
   });
 
   describe('AC-3 (regra 2): na ordem da conferência', () => {
     it('AC-3 (regra 2): pela Invoice.check com as verificações reais, a nota sai E7 e a primeira divergência é E7', () => {
-      const nota = notaF09();
+      const invoice = f09Invoice();
 
-      nota.check(emptyContext({ payments: [aPayment()] }), CHECKS);
+      invoice.check(emptyContext({ payments: [aPayment()] }), CHECKS);
 
-      expect(nota.classification).toBe('E7');
-      expect(nota.divergences[0]?.classification).toBe('E7');
+      expect(invoice.classification).toBe('E7');
+      expect(invoice.divergences[0]?.classification).toBe('E7');
     });
 
     it('AC-3 (regra 2): quando a duplicidade (E6) acha algo, o E7 não roda', () => {
@@ -246,13 +247,13 @@ describe('E7 — pago fora do fluxo (história #33)', () => {
           return checkPagoForaDoFluxo(invoice, ctx);
         },
       };
-      const nota = notaF09();
+      const invoice = f09Invoice();
 
-      nota.check(emptyContext({ payments: [aPayment()] }), [e6, e7]);
+      invoice.check(emptyContext({ payments: [aPayment()] }), [e6, e7]);
 
       expect(calls).toEqual([]);
-      expect(nota.divergences.map((d) => d.classification)).toEqual(['E6']);
-      expect(nota.classification).toBe('E6');
+      expect(invoice.divergences.map((d) => d.classification)).toEqual(['E6']);
+      expect(invoice.classification).toBe('E6');
     });
   });
 
@@ -260,7 +261,14 @@ describe('E7 — pago fora do fluxo (história #33)', () => {
     const payments = [aPayment({ id: 'PG-2', paidOn: '2026-11-01' }), aPayment({ id: 'PG-1', paidOn: '2026-11-01' })];
     const ctx = frozen(emptyContext({ payments }));
 
-    expect(() => checkPagoForaDoFluxo(notaF09(), ctx)).not.toThrow();
+    expect(() => checkPagoForaDoFluxo(f09Invoice(), ctx)).not.toThrow();
     expect(ctx.payments.map((p) => p.id)).toEqual(['PG-2', 'PG-1']);
+  });
+});
+
+describe('#64: data do pagamento fora do formato', () => {
+  it('AC-1 (regra 2): data fora de YYYY-MM-DD é erro, e não um E7 que some sem aviso', () => {
+    const ctx = emptyContext({ payments: [aPayment({ paidOn: '02/11/2026' })] });
+    expect(() => checkPagoForaDoFluxo(f09Invoice(), ctx)).toThrow(DomainError);
   });
 });

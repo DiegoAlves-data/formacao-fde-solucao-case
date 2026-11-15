@@ -6,9 +6,9 @@ import { FakePostgrest } from '../support/fake-postgrest.js';
 import { kitTables } from '../support/kit.js';
 
 // #64 / #33: o E7 contra o mock do Banco (kit_pagamentos), pelo Cron de captura de ponta a ponta.
-// Os 9 pagamentos sem nota da base do kit, cada um com a nota tardia que fecha com ele
-// (fornecedor, destino, valor; emitida de 4 a 8 dias depois). Final da chave → pagamento.
-const NOTA_TARDIA_PARA_PAGAMENTO: Record<string, string> = {
+// #64: os 9 pagamentos sem nota da base do kit, cada um com a nota tardia que fecha com ele
+// #64: (fornecedor, destino, valor; emitida de 4 a 8 dias depois). Final da chave → pagamento.
+const LATE_INVOICE_TO_PAYMENT: Record<string, string> = {
   '74374841': 'PG-5301',
   '79888508': 'PG-5304',
   '41877330': 'PG-5308',
@@ -36,7 +36,7 @@ describe('#64 E7 pago fora do fluxo na base do kit (offline)', () => {
       .filter((r) => r.classification === 'E7')
       .map((r) => String(r.access_key).slice(-8))
       .sort();
-    expect(e7).toEqual(Object.keys(NOTA_TARDIA_PARA_PAGAMENTO).sort());
+    expect(e7).toEqual(Object.keys(LATE_INVOICE_TO_PAYMENT).sort());
   });
 
   it('AC-2 / AC-5 (regra 6): cada nota E7 fica gravada vinculada ao seu pagamento, como evidência do banco', async () => {
@@ -44,7 +44,7 @@ describe('#64 E7 pago fora do fluxo na base do kit (offline)', () => {
     const e7 = (fake.rows('divergences') as Row[]).filter((d) => d.classification === 'E7');
     expect(e7).toHaveLength(9);
     for (const d of e7) {
-      const expected = NOTA_TARDIA_PARA_PAGAMENTO[String(d.invoice_access_key).slice(-8)];
+      const expected = LATE_INVOICE_TO_PAYMENT[String(d.invoice_access_key).slice(-8)];
       expect(d.evidence).toEqual([expect.objectContaining({ source: 'banco', reference: expected })]);
     }
   });
